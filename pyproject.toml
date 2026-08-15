@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "malweave"
+version = "0.1.0"
+description = "Independent research tooling for malware language modeling."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "MalWeave contributors" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.8"]
+docs = ["mkdocs>=1.6"]
+
+[tool.setuptools.packages.find]
+include = ["malweave*"]
+
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+src = ["malweave", "tests"]
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["malweave"]
+force-sort-within-sections = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

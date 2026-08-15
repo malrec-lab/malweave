@@ -1,0 +1,16 @@
+site_name: MalWeave
+site_description: Independent research documentation for malware language modeling.
+site_author: MalWeave contributors
+theme:
+  name: readthedocs
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Project structure: project-structure.md
+  - Migration report: migration.md
+  - Dataset catalog:
+      - Overview: datasets/index.md
+      - Assemblage: datasets/assemblage.md
+      - BODMAS: datasets/bodmas.md
+      - RanDS: datasets/rands.md
+      - SOREL-20M: datasets/sorel-20m.md
