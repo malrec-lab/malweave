@@ -1,8 +1,7 @@
-"""Dataset acquisition, validation, splitting, and transformation code."""
+"""Low-level file/archive reading and writing helpers, independent of malware-specific logic."""
 
-from .io import (
-    get_data_from_archives,
-    get_processed_data,
+from .archives import get_data_from_archives, get_processed_data
+from .binary_files import (
     read_binary_file,
     read_binary_files,
     read_binary_files_lazy,
@@ -12,11 +11,8 @@ from .io import (
     write_binary_file,
     write_binary_file_asynch,
     write_binary_files_asynch,
-    Decompressor,
-    decompress_error_resilient,
-    decompress_collection,
 )
-from .executable_sections import get_executable_section, get_executable_section_bounds
+from .decompression import Decompressor, decompress_error_resilient, decompress_collection
 
 __all__ = [
     "get_data_from_archives",
@@ -33,6 +29,4 @@ __all__ = [
     "Decompressor",
     "decompress_error_resilient",
     "decompress_collection",
-    "get_executable_section",
-    "get_executable_section_bounds",
 ]

@@ -4,14 +4,24 @@
 !.env.example
 
 # Dataset contents are intentionally local. Keep only directory guidance in Git.
+# Matches both the shared top-level lifecycle dirs and any per-dataset ones
+# nested under data/<dataset_name>/{raw,external,interim,processed}/.
 /data/external/*
+/data/*/external/*
 !/data/external/.gitkeep
+!/data/*/external/.gitkeep
 /data/interim/*
+/data/*/interim/*
 !/data/interim/.gitkeep
+!/data/*/interim/.gitkeep
 /data/processed/*
+/data/*/processed/*
 !/data/processed/.gitkeep
+!/data/*/processed/.gitkeep
 /data/raw/*
+/data/*/raw/*
 !/data/raw/.gitkeep
+!/data/*/raw/.gitkeep
 
 # Training artifacts are reproducible outputs, not source files.
 /models/*
