@@ -54,7 +54,7 @@ Read the full [project structure guide](docs/mkdocs/docs/project-structure.md) b
 ## Research Workflow
 
 1. Choose and document a dataset in `configs/datasets/`; follow its corresponding dataset card before downloading anything.
-2. Store immutable downloads in `data/raw/` or third-party inputs in `data/external/`. Keep these directories out of Git.
+2. Store immutable downloads in `data/raw/` or third-party inputs in `data/external/` (per-dataset, e.g. `data/<dataset_name>/raw/`, once a dataset outgrows the shared directory — see the [local data guide](data/README.md)). Keep these directories out of Git.
 3. Make deterministic transformations through `data/interim/` to `data/processed/`, with code in `malweave/data/` and configuration in `configs/`.
 4. Put reusable model components in `malweave/models/`, orchestration in `malweave/training/`, and metrics/split logic in `malweave/evaluation/`.
 5. Save checkpoints and predictions under `models/`, then create figures and generated reports under `reports/`. Record each run's configuration, seed, dataset release, and metrics together.
