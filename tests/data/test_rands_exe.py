@@ -1,4 +1,4 @@
-"""Synthetic tests for bounded RanDS pilot EXE extraction."""
+"""Synthetic tests for full-corpus, resumable RanDS EXE extraction."""
 
 from __future__ import annotations
 
@@ -8,18 +8,24 @@ import json
 from pathlib import Path
 import struct
 
+import pytest
+
 from malweave.cli import main
 from malweave.data.dataset_config import (
     RandsDatasetConfig,
+    RandsDatasetLocations,
     RandsExpectedCounts,
     RandsProtocol,
 )
 from malweave.data.pe_sections import IMAGE_SCN_CNT_CODE
+from malweave.data.rands import BENIGN_HEADER, RANSOMWARE_ACTUAL_HEADER
 from malweave.data.rands_exe import (
+    RandsExeError,
+    enumerate_rands_sources,
     extract_rands_exe,
-    load_pilot_sources,
     write_rands_exe_outputs,
 )
+from malweave.data.rands_products import build_rands_products, load_exe_inputs
 
 
 def _synthetic_pe(*, code: bool, section_byte: bytes = b"X") -> bytes:
@@ -40,81 +46,50 @@ def _synthetic_pe(*, code: bool, section_byte: bytes = b"X") -> bytes:
     return bytes(content)
 
 
-def _write_pilot_manifest(path: Path, rows: list[dict[str, str]]) -> None:
-    fieldnames = (
-        "source_sha256",
-        "label",
-        "family",
-        "relative_path",
-        "source_hash_verified",
-        "snapshot",
-    )
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def _fixture(tmp_path: Path) -> tuple[Path, RandsDatasetConfig, Path, dict[str, str]]:
+def _fixture(tmp_path: Path) -> tuple[Path, RandsDatasetConfig, dict[str, str]]:
     root = tmp_path / "rands"
     (root / "dataset").mkdir(parents=True)
-    manifest_path = tmp_path / "pilot.csv"
-    sources: dict[str, str] = {}
-
-    def add(name: str, content: bytes, *, stored_content: bytes | None = None) -> str:
-        source_sha256 = hashlib.sha256(content).hexdigest()
-        source_path = root / "dataset" / source_sha256[:2]
-        source_path.mkdir(parents=True, exist_ok=True)
-        (source_path / source_sha256).write_bytes(
-            stored_content if stored_content is not None else content
+    contents = {"benign": _synthetic_pe(code=True), "ransomware": _synthetic_pe(code=False)}
+    shas = {name: hashlib.sha256(content).hexdigest() for name, content in contents.items()}
+    for name, content in contents.items():
+        path = root / "dataset" / shas[name][:2]
+        path.mkdir(parents=True, exist_ok=True)
+        (path / shas[name]).write_bytes(content)
+    with (root / "Benign.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(BENIGN_HEADER)
+        writer.writerow(
+            [
+                shas["benign"],
+                "a" * 40,
+                "b" * 32,
+                len(contents["benign"]),
+                "exe",
+                "I386",
+                0,
+                1.0,
+                2020,
+                "ignored",
+            ]
         )
-        sources[name] = source_sha256
-        return source_sha256
-
-    valid = add("valid", _synthetic_pe(code=True))
-    no_code = add("no_code", _synthetic_pe(code=False))
-    mismatch = add(
-        "mismatch", _synthetic_pe(code=True, section_byte=b"Y"), stored_content=b"changed bytes"
-    )
-    missing = hashlib.sha256(b"missing fixture").hexdigest()
-    sources["missing"] = missing
-    _write_pilot_manifest(
-        manifest_path,
-        [
-            {
-                "source_sha256": valid,
-                "label": "benign",
-                "family": "",
-                "relative_path": f"{valid[:2]}/{valid}",
-                "source_hash_verified": "1",
-                "snapshot": "test",
-            },
-            {
-                "source_sha256": no_code,
-                "label": "ransomware",
-                "family": "Synthetic",
-                "relative_path": f"{no_code[:2]}/{no_code}",
-                "source_hash_verified": "1",
-                "snapshot": "test",
-            },
-            {
-                "source_sha256": mismatch,
-                "label": "ransomware",
-                "family": "Synthetic",
-                "relative_path": f"{mismatch[:2]}/{mismatch}",
-                "source_hash_verified": "1",
-                "snapshot": "test",
-            },
-            {
-                "source_sha256": missing,
-                "label": "benign",
-                "family": "",
-                "relative_path": f"{missing[:2]}/{missing}",
-                "source_hash_verified": "1",
-                "snapshot": "test",
-            },
-        ],
-    )
+    with (root / "Ransomware.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(RANSOMWARE_ACTUAL_HEADER)
+        writer.writerow(
+            [
+                shas["ransomware"],
+                "c" * 40,
+                "d" * 32,
+                len(contents["ransomware"]),
+                "exe",
+                "I386",
+                0,
+                1.0,
+                "Synthetic",
+                2021,
+                "ignored",
+            ]
+        )
     config = RandsDatasetConfig(
         name="rands",
         snapshot="test",
@@ -122,93 +97,122 @@ def _fixture(tmp_path: Path) -> tuple[Path, RandsDatasetConfig, Path, dict[str, 
         benign_csv="Benign.csv",
         ransomware_csv="Ransomware.csv",
         samples_dir="dataset",
-        expected=RandsExpectedCounts(shards=0, files=0, labels={"benign": 0, "ransomware": 0}),
+        expected=RandsExpectedCounts(
+            shards=len({value[:2] for value in shas.values()}),
+            files=2,
+            labels={"benign": 1, "ransomware": 1},
+        ),
         protocols={"full": RandsProtocol()},
     )
-    return root, config, manifest_path, sources
+    return root, config, shas
 
 
-def test_extract_rands_exe_reports_every_source_and_reuses_valid_output(tmp_path: Path) -> None:
-    root, config, pilot_manifest, sources = _fixture(tmp_path)
+def test_full_extraction_commits_each_source_and_resumes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, config, shas = _fixture(tmp_path)
     representation_root = tmp_path / "representations"
-
-    rows, summary = extract_rands_exe(
-        config, root, load_pilot_sources(pilot_manifest), representation_root
+    state_path = tmp_path / "state" / "exe.sqlite"
+    first_rows, first_summary = extract_rands_exe(
+        config, root, representation_root, state_path, limit=1, progress_every=1
     )
-
-    assert [row.extraction_status for row in rows] == [
-        "success",
-        "no_executable_section",
-        "source_hash_mismatch",
-        "read_error",
-    ]
-    assert summary["sources"] == {
-        "attempted": 4,
-        "source_bytes_read": len(_synthetic_pe(code=True)) + len(_synthetic_pe(code=False)) + 13,
-        "source_hash_verified": 2,
-        "source_hash_mismatches": 1,
-        "read_errors": 1,
+    assert len(first_rows) == 1
+    assert first_summary["job"] == {
+        "sources_total": 2,
+        "sources_completed": 1,
+        "sources_pending": 1,
+        "complete": False,
     }
-    assert summary["extraction"]["successful"] == 1
-    assert (representation_root / f"{sources['valid']}.bin").read_bytes() == b"X" * 0x20
+    assert "[extract-exe] 1/2 (50.0%)" in capsys.readouterr().err
+    rows, summary = extract_rands_exe(config, root, representation_root, state_path, resume=True)
+    assert [row.source_sha256 for row in rows] == sorted(shas.values())
+    assert summary["job"]["complete"] is True
+    assert summary["extraction"]["statuses"] == {"no_executable_section": 1, "success": 1}
+    assert (
+        representation_root / shas["benign"][:2] / f"{shas['benign']}.bin"
+    ).read_bytes() == b"X" * 0x20
+    manifest_path = tmp_path / "exe-manifest.csv"
+    summary_path = tmp_path / "summary.json"
+    written = write_rands_exe_outputs(rows, summary, manifest_path, summary_path)
+    assert written["manifest"]["rows"] == 2
+    assert json.loads(summary_path.read_text(encoding="utf-8"))["job"]["complete"] is True
 
-    repeated_rows, repeated_summary = extract_rands_exe(
-        config, root, load_pilot_sources(pilot_manifest), representation_root
+
+def test_state_requires_explicit_resume(tmp_path: Path) -> None:
+    root, config, _ = _fixture(tmp_path)
+    state_path = tmp_path / "state.sqlite"
+    extract_rands_exe(config, root, tmp_path / "exe", state_path, limit=1)
+    with pytest.raises(RandsExeError, match="state already exists"):
+        extract_rands_exe(config, root, tmp_path / "exe", state_path)
+
+
+def test_products_derive_full_audited_source_list(tmp_path: Path) -> None:
+    root, config, _ = _fixture(tmp_path)
+    raw_root = tmp_path / "raw"
+    metadata_root = tmp_path / "metadata"
+    raw_root.mkdir()
+    metadata_root.mkdir()
+    (root / "dataset").rename(raw_root / "dataset")
+    (root / "Benign.csv").rename(metadata_root / "Benign.csv")
+    (root / "Ransomware.csv").rename(metadata_root / "Ransomware.csv")
+    locations = RandsDatasetLocations(raw_root=raw_root, metadata_root=metadata_root)
+    exe_root = tmp_path / "exe"
+    rows, summary = extract_rands_exe(config, locations, exe_root, tmp_path / "state.sqlite")
+    manifest_path = tmp_path / "exe.csv"
+    write_rands_exe_outputs(rows, summary, manifest_path, tmp_path / "summary.json")
+    products, product_summary = build_rands_products(
+        config, locations, load_exe_inputs(manifest_path), exe_root
     )
-    assert repeated_rows[0].representation_reused is True
-    assert repeated_rows[0].representation_sha256 == rows[0].representation_sha256
-    assert repeated_summary["extraction"]["reused_representations"] == 1
+    assert len(enumerate_rands_sources(config, locations)) == 2
+    assert {row.representation for row in products} == {"raw", "exe"}
+    assert product_summary["source_cohort"] == {
+        "total": 2,
+        "raw_available": 2,
+        "exe_available": 1,
+        "exe_excluded": {"no_executable_section": 1},
+    }
 
 
-def test_exe_outputs_and_cli_keep_sample_hashes_out_of_summary(tmp_path: Path, capsys) -> None:
-    root, config, pilot_manifest, sources = _fixture(tmp_path)
-    representation_root = tmp_path / "representations"
-    rows, summary = extract_rands_exe(
-        config, root, load_pilot_sources(pilot_manifest), representation_root
-    )
-    output_manifest = tmp_path / "exe-manifest.csv"
-    summary_path = tmp_path / "exe-summary.json"
-    completed_summary = write_rands_exe_outputs(rows, summary, output_manifest, summary_path)
-
-    assert completed_summary["manifest"]["rows"] == 4
-    assert output_manifest.exists() is True
-    summary_text = summary_path.read_text(encoding="utf-8")
-    assert json.loads(summary_text)["extraction"]["successful"] == 1
-    assert all(source_sha256 not in summary_text for source_sha256 in sources.values())
-
-    config_path = tmp_path / "rands.yaml"
+def test_cli_uses_full_corpus_without_a_source_manifest(tmp_path: Path) -> None:
+    root, _, _ = _fixture(tmp_path)
+    raw_root = tmp_path / "raw"
+    metadata_root = tmp_path / "metadata"
+    raw_root.mkdir()
+    metadata_root.mkdir()
+    (root / "dataset").rename(raw_root / "dataset")
+    (root / "Benign.csv").rename(metadata_root / "Benign.csv")
+    (root / "Ransomware.csv").rename(metadata_root / "Ransomware.csv")
+    config_path = tmp_path / "dataset.yaml"
     config_path.write_text(
-        """
-dataset: {name: rands, snapshot: test, root_env: TEST_RANDS_ROOT}
+        """dataset: {name: rands, snapshot: test, root_env: TEST_RANDS_ROOT}
 layout: {benign_csv: Benign.csv, ransomware_csv: Ransomware.csv, samples_dir: dataset}
-expected: {shards: 0, files: 0, labels: {benign: 0, ransomware: 0}}
+expected: {shards: 2, files: 2, labels: {benign: 1, ransomware: 1}}
 protocols: {full: {}}
-""".strip()
-        + "\n",
+""",
         encoding="utf-8",
     )
-    exit_code = main(
-        [
-            "data",
-            "extract-exe",
-            "--dataset",
-            "rands",
-            "--config",
-            str(config_path),
-            "--root",
-            str(root),
-            "--pilot-manifest",
-            str(pilot_manifest),
-            "--representation-dir",
-            str(tmp_path / "cli-representations"),
-            "--manifest",
-            str(tmp_path / "cli-exe-manifest.csv"),
-            "--summary",
-            str(tmp_path / "cli-exe-summary.json"),
-        ]
+    assert (
+        main(
+            [
+                "data",
+                "extract-exe",
+                "--dataset",
+                "rands",
+                "--config",
+                str(config_path),
+                "--root",
+                str(raw_root),
+                "--metadata-root",
+                str(metadata_root),
+                "--representation-dir",
+                str(tmp_path / "exe"),
+                "--state-db",
+                str(tmp_path / "state.sqlite"),
+                "--manifest",
+                str(tmp_path / "exe.csv"),
+                "--summary",
+                str(tmp_path / "summary.json"),
+            ]
+        )
+        == 0
     )
-
-    output = capsys.readouterr().out
-    assert exit_code == 0
-    assert json.loads(output)["sources"]["attempted"] == 4
-    assert all(source_sha256 not in output for source_sha256 in sources.values())

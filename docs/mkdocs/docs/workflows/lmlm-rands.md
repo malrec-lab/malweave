@@ -1,209 +1,120 @@
-# LMLM on RanDS Workflow
+# RanDS Data Preparation
 
-This workflow reproduces the data methodology from "Beyond Raw Bytes" on a new ransomware
-corpus. It is not a reproduction of the paper's exact datasets or reported scores.
+This workflow prepares full-corpus data representations. It does not choose a model, a split, a
+tokenizer, or hyperparameters. Those choices belong to a later experiment configuration.
 
-Use the [research roadmap](lmlm-rands-roadmap.md) as the canonical phase plan and completion
-checklist. This page documents the implemented inventory and pilot-manifest workflows.
+Raw RanDS files are live malware. Run this only in the approved isolated storage environment; the
+commands statically read bytes and never execute, upload, or modify the source files.
 
-## Implemented milestone: inventory the raw release
+## Locate And Audit The Corpus
 
-The first milestone is read-only. It validates metadata, paths, release counts, and protocol
-coverage before any PE representation is extracted.
-
-Do not run this workflow from a directory synchronized to public cloud storage. Raw RanDS files
-are live malware and must remain in an isolated, access-controlled location.
-
-## 1. Point MalWeave at the local corpus
-
-Create a machine-local configuration file from the committed template:
-
-```bash
-cp .env.example .env
-```
-
-Set the extracted corpus path in `.env`:
+Create a local `.env` from the template and set the raw and metadata locations:
 
 ```dotenv
-MALWEAVE_RANDS_DIR=/path/to/RanDS_PE_Dataset
+MALWEAVE_RANDS_DIR=/path/to/rands/raw
+MALWEAVE_RANDS_METADATA_DIR=/path/to/rands/metadata
 ```
 
-The CLI loads the root `.env` automatically and the file is ignored by Git. Do not commit local
-paths, credentials, or private storage URLs. For CI or a one-off shell, the variable may instead be
-exported directly:
+The raw root contains the SHA-256-sharded `dataset/` directory. The metadata root contains
+`Benign.csv` and `Ransomware.csv`; one label source can therefore serve RAW, EXE, DIS, and DEC.
+When `MALWEAVE_RANDS_METADATA_DIR` and `--metadata-root` are omitted, MalWeave retains compatibility
+with the legacy combined root containing all three entries. Before producing a representation, audit
+the release contract:
 
 ```bash
-export MALWEAVE_RANDS_DIR=/path/to/RanDS_PE_Dataset
-```
-
-Root resolution uses this precedence, from highest to lowest:
-
-1. The explicit `--root /path/to/RanDS_PE_Dataset` CLI argument.
-2. `MALWEAVE_RANDS_DIR` already supplied by the shell or CI environment.
-3. `MALWEAVE_RANDS_DIR` loaded from the root `.env` file.
-
-The configured root must contain:
-
-```text
-Benign.csv
-Ransomware.csv
-dataset/
-  00/
-  01/
-  ...
-  ff/
-```
-
-## 2. Run the read-only audit
-
-```bash
-uv run --locked malweave data inspect --dataset rands
-```
-
-The command prints aggregate JSON only. It does not print sample hashes, execute binaries, create
-directories, or write a manifest by default.
-
-Exit status meanings:
-
-| Status | Meaning |
-| ---: | --- |
-| `0` | The local corpus matches the committed release contract. |
-| `1` | Inspection completed, but expected counts or integrity checks failed. |
-| `2` | Configuration, schema, path, or I/O error prevented inspection. |
-
-## 3. Interpret the release contract
-
-The audited `2026-09-02` snapshot expects:
-
-| Item | Expected |
-| --- | ---: |
-| SHA-256 shards | 256 |
-| Available PE files | 215,404 |
-| Available benign files | 110,788 |
-| Available ransomware files | 104,616 |
-
-The CSV files advertise more samples than the archive contains. This is expected for this
-snapshot: unavailable metadata rows remain visible in the audit and in an optional manifest.
-
-The released `Ransomware.csv` also has a schema mismatch. Its header says
-`Family, Packed, Entropy`, while its rows store `Packed, Entropy, Family`. MalWeave detects the
-value layout and normalizes it. Do not bypass the loader with a plain `csv.DictReader`.
-
-## 4. Verify a bounded content sample
-
-Hashing one deterministic PE per shard provides a stronger check without reading the full corpus:
-
-```bash
-uv run --locked malweave data inspect \
-  --dataset rands \
-  --verify-hashes sample
-```
-
-`--verify-hashes all` reads every byte in the roughly 170 GiB corpus. Use it only as an explicit
-integrity job, not as part of routine development.
-
-## 5. Save local outputs when needed
-
-An aggregate summary contains no sample hashes and may be written explicitly:
-
-```bash
-uv run --locked malweave data inspect \
-  --dataset rands \
+uv run --locked malweave data inspect --dataset rands \
   --summary reports/rands/2026-09-02/inspection.json
 ```
 
-A manifest contains sample hashes and must remain ignored or outside the repository:
+The audit checks the expected full release: 256 shards, 215,404 available files, class counts,
+metadata schema, path layout, metadata/file coverage, and file sizes. It is read-only. Add
+`--verify-hashes all` only when you deliberately want a separate full-byte integrity pass; normal
+EXE extraction re-hashes each source immediately before static parsing.
 
-```bash
-uv run --locked malweave data inspect \
-  --dataset rands \
-  --manifest data/interim/rands/2026-09-02/inventory.csv
-```
+## Extract The Full EXE Representation
 
-Manifests written inside the repository are accepted only under `data/interim/` or
-`data/processed/`, both of which are ignored. Provider machine paths are deliberately excluded.
-This full-release inventory is an optional Phase 0 diagnostic/provenance artifact, not an input to
-the Phase 2 pilot command.
-
-## Protocols reported by the audit
-
-`full` includes every available PE. `lmlm_x86_unpacked` retains samples whose metadata says
-`Arch=I386` and `Packed=0`, matching the paper's principal collection filters more closely.
-
-Keep these protocols separate. The full corpus has strong class correlations with architecture
-and packing status; the filtered protocol changes class balance and removes many low-support
-ransomware families.
-
-## 6. Build the deterministic Phase 2 pilot
-
-After the audit release contract passes, build the local pilot with explicit output paths:
-
-```bash
-uv run --locked malweave data pilot \
-  --dataset rands \
-  --manifest data/interim/rands/2026-09-02/pilot-1000.csv \
-  --summary reports/rands/2026-09-02/pilot-1000.json
-```
-
-The command uses the committed `lmlm-rands-pilot.yaml` by default. It filters available metadata
-to EXE/DLL, `I386`, and unpacked samples, then ranks source SHA-256 values using the recorded seed.
-It selects 500 benign samples directly. For ransomware it allocates 500 slots proportionally across
-eligible families with the largest-remainder method, breaking exact ties with a SHA-256-derived
-family rank. It then selects the best ranked sources within each family.
-
-The command first reads metadata and the filesystem through the Phase 0 release contract. It reads
-the bytes of exactly the selected 1,000 source files only to calculate SHA-256; it does not parse,
-execute, or modify a PE. It writes:
-
-- `pilot-1000.csv`: source identities, cohort metadata, deterministic selection fields, and a
-  `source_hash_verified=1` field. It contains sample hashes and remains ignored.
-- `pilot-1000.json`: aggregate targets, exclusions, family allocation, bytes read, verification
-  counts, and the manifest digest. It contains no individual sample hashes and remains ignored.
-
-If the release contract fails, selection stops. If any selected file has the wrong SHA-256, the
-command writes only a failure summary and returns status `1`; it never writes a valid manifest.
-Status `2` means configuration, path, or I/O prevented completion.
-
-Run the same command again with a different local filename to compare manifest digests or bytes.
-Given an unchanged snapshot and config, the manifest is byte-identical across supported platforms.
-This pilot is engineering evidence only: it is not a scientific train/validation/test split, and it
-does not yet establish representation-equivalence groups.
-
-## 7. Extract static EXE bytes from the pilot
-
-Only after the Phase 2 manifest exists, invoke the bounded EXE extraction with explicit ignored
-output locations:
+Start one durable job. All paths below are ignored local artifacts; the state database is the source
+of truth while the job is running.
 
 ```bash
 uv run --locked malweave data extract-exe \
   --dataset rands \
-  --pilot-manifest data/interim/rands/2026-09-02/pilot-1000.csv \
-  --representation-dir data/processed/rands/2026-09-02/exe \
-  --manifest data/processed/rands/2026-09-02/exe-manifest.csv \
+  --representation-dir data/processed/rands/exe \
+  --state-db data/processed/rands/exe/extraction.sqlite \
+  --manifest data/processed/rands/exe/manifest.csv \
   --summary reports/rands/2026-09-02/exe-extraction.json
 ```
 
-The command accepts only a pilot manifest whose rows were source-hash-verified and whose paths use
-the canonical SHA-256 shard layout. It re-hashes each source before parsing, so a later changed or
-missing source becomes `source_hash_mismatch` or `read_error`, not an unreported replacement.
+The command first reruns the release audit and refuses an incomplete or malformed corpus. It then
+enumerates every available metadata-backed source in SHA-256 order. For every source it:
 
-LIEF `0.15.1`, RawByteClf's default toolkit, statically parses the source. A section is selected
-when it has `IMAGE_SCN_MEM_EXECUTE` or `IMAGE_SCN_CNT_CODE`; selected raw ranges remain in
-section-table order. To match RawByteClf, a range that extends beyond EOF or into the next non-empty
-section is clipped and recorded as a warning. Header and parser failures, no executable section, and
-empty executable output remain individual machine-readable statuses in `exe-manifest.csv`.
+1. Reads and re-hashes the raw bytes against its canonical source SHA-256.
+2. Statically extracts executable PE sections with the existing RawByteClf-compatible rules.
+3. Stores successful bytes at `exe/<first-two-sha-characters>/<source-sha>.bin`.
+4. Commits the source result, failure status, byte count, representation digest, and runtime to
+   SQLite before moving on.
 
-Successful EXE bytes are stored as `<source SHA-256>.bin` under the representation directory. The
-manifest links each result to its source, representation SHA-256, section counts, size, runtime, and
-status. A repeat run reuses an existing representation only when its SHA-256 matches newly extracted
-bytes; a conflicting existing file stops rather than overwriting it. The JSON summary reports only
-aggregate coverage, class-specific statuses, warnings, storage, and duplicate-representation counts.
+Failures are data results, not silent drops: read errors, source-hash mismatches, malformed PEs,
+and sources with no executable section remain in `exe-manifest.csv`. The JSON report carries only
+aggregate counts and never individual source identities.
 
-This command does not deduplicate representations, create a scientific split, tokenize, train a
-model, or run Ghidra. Those remain later gates.
+Use a bounded local check if desired, without defining a special cohort:
 
-## Protocol review
+```bash
+uv run --locked malweave data extract-exe \
+  --dataset rands \
+  --representation-dir data/processed/rands/exe \
+  --state-db data/processed/rands/exe/extraction.sqlite \
+  --manifest data/processed/rands/exe/manifest.csv \
+  --summary reports/rands/2026-09-02/exe-extraction.json \
+  --limit 100
+```
 
-Phase 1 decisions are recorded in the short [LMLM on RanDS protocol](lmlm-rands-protocol.md) and
-its experiment config. The deterministic 1,000-sample pilot is in maintainer review. Do not start
-executable-section extraction, Ghidra disassembly, or decompilation until its roadmap gate passes.
+Continue that exact job with the same output locations:
+
+```bash
+uv run --locked malweave data extract-exe \
+  --dataset rands \
+  --representation-dir data/processed/rands/exe \
+  --state-db data/processed/rands/exe/extraction.sqlite \
+  --manifest data/processed/rands/exe/manifest.csv \
+  --summary reports/rands/2026-09-02/exe-extraction.json \
+  --resume
+```
+
+`--resume` validates the snapshot and complete source-list digest before it skips completed rows.
+It will not accidentally merge two different releases. An existing state database without
+`--resume` is rejected. If a representation file already exists after an interruption, it is reused
+only when its digest matches newly extracted bytes; a conflicting file stops the job.
+
+The command writes one aggregate terminal progress line to `stderr` after every 100 sources, while
+leaving final JSON on `stdout` for automation. Include `--progress-every 1000` to reduce terminal
+updates or a smaller positive number for more frequent updates.
+
+## Freeze Representation Products
+
+Once EXE extraction is complete, build representation products. RAW remains a verified reference to
+the canonical source bytes; no second RAW copy is created. This pass re-hashes the full source
+corpus and validates all successful EXE files before writing product and exact-duplicate manifests.
+
+```bash
+uv run --locked malweave data build-products \
+  --dataset rands \
+  --exe-manifest data/processed/rands/exe/manifest.csv \
+  --exe-dir data/processed/rands/exe \
+  --manifest data/processed/rands/products-manifest.csv \
+  --duplicate-groups data/processed/rands/exe-duplicate-groups.csv \
+  --summary reports/rands/2026-09-02/products.json
+```
+
+Now the data workstream is complete for RAW and EXE: it has full-corpus availability, failures,
+representation identities, and duplicate groups. Add other representations (DIS, DEC, strings, or
+APIs) with their own full-corpus extractors and manifests; do not make them depend on a model run.
+
+## Start An Experiment Later
+
+When the model components are ready, create an experiment configuration that selects products,
+architectures, tokenization, loss, optimizer, schedule, epochs, seeds, and evaluation policy. For a
+comparative claim, the config first freezes a leakage-safe split, then fits tokenizers only on its
+training partition. Each training run records the resolved config, input digests, checkpoint,
+metrics, and environment in a private artifact directory.

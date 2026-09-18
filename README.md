@@ -8,9 +8,9 @@ corpus; it is not the paper's official implementation.
 
 ## Current State
 
-RanDS currently supports a read-only release audit, a deterministic source-hash-verified pilot
-manifest, and static EXE-section extraction from that pilot. No command executes PE files.
-Tokenization, model training, and Ghidra analysis are planned phases, not available commands.
+RanDS supports a read-only release audit, full-corpus resumable static EXE-section extraction,
+and frozen RAW/EXE products. Model components for MalConvGCT, HRRFormer, and Mamba are separate
+from data preparation. No command executes PE files. Ghidra-derived views remain separate work.
 
 ```bash
 uv sync --locked
@@ -26,7 +26,8 @@ make check
 | Understand source and artifact boundaries | [Project Structure](docs/mkdocs/docs/project-structure.md) |
 | Use the RanDS corpus | [RanDS dataset card](docs/mkdocs/docs/datasets/rands.md) |
 | Run the implemented RanDS audit | [LMLM on RanDS workflow](docs/mkdocs/docs/workflows/lmlm-rands.md) |
-| Check which research phase is allowed | [LMLM on RanDS roadmap](docs/mkdocs/docs/workflows/lmlm-rands-roadmap.md) |
+| Prepare the complete RanDS RAW/EXE corpus | [RanDS data-preparation workflow](docs/mkdocs/docs/workflows/lmlm-rands.md) |
+| Understand data, components, and experiments | [Research workstreams](docs/mkdocs/docs/workflows/research-workstreams.md) |
 | Change dependencies or contributor workflow | [Environment guide](docs/mkdocs/docs/development/environment.md) and [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Safety

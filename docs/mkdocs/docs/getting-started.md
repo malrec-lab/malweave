@@ -27,18 +27,21 @@ read-only release audit before preprocessing:
 
 ```bash
 cp .env.example .env
-# Edit .env and set MALWEAVE_RANDS_DIR to the extracted corpus path.
+# Edit .env: MALWEAVE_RANDS_DIR points to raw/dataset and
+# MALWEAVE_RANDS_METADATA_DIR points to the directory holding both CSV files.
 uv run --locked malweave data inspect --dataset rands
 ```
 
 The MalWeave CLI loads `.env` automatically. A variable already exported by the shell or supplied
-by CI takes precedence over `.env`, and an explicit `--root` argument takes precedence over both.
+by CI takes precedence over `.env`, and explicit `--root` and `--metadata-root` arguments take
+precedence over both. `--root` means the raw root; omit `--metadata-root` only for the legacy
+combined layout.
 Never commit `.env`; only `.env.example` is versioned.
 
 See [LMLM on RanDS](workflows/lmlm-rands.md) for the release contract, bounded hash
-verification, local manifest creation, and the staged reproduction plan.
+verification, local manifest creation, and the RanDS data workflow.
 
 ## 3. Implement a research task
 
 After setup, use [Onboarding a Research Task](onboarding.md). It is the single guide for reading
-order, phase gates, code placement, focused tests, documentation updates, and review before commit.
+task boundaries, code placement, focused tests, documentation updates, and review before commit.

@@ -1,4 +1,4 @@
-"""Bounded EXE extraction for a verified local RanDS pilot manifest."""
+"""Resumable static EXE-section extraction for an audited full RanDS corpus."""
 
 from __future__ import annotations
 
@@ -9,22 +9,16 @@ from hashlib import sha256
 import io
 import json
 from pathlib import Path
+import sqlite3
+import sys
 import time
 from typing import Any
 
 from malweave.config import PROJECT_ROOT
-from malweave.data.dataset_config import RandsDatasetConfig
+from malweave.data.dataset_config import RandsDatasetConfig, RandsDatasetLocations
 from malweave.data.pe_sections import extract_executable_sections
-from malweave.data.rands import SHA256_PATTERN, _validate_manifest_path
+from malweave.data.rands import _validate_manifest_path, inspect_rands
 
-PILOT_MANIFEST_FIELDS = {
-    "source_sha256",
-    "label",
-    "family",
-    "relative_path",
-    "source_hash_verified",
-    "snapshot",
-}
 EXE_MANIFEST_FIELDS = (
     "source_sha256",
     "label",
@@ -44,12 +38,12 @@ EXE_MANIFEST_FIELDS = (
 
 
 class RandsExeError(ValueError):
-    """Raised when a pilot manifest or local EXE output location is unsafe or malformed."""
+    """Raised when the full-corpus extraction job is unsafe or malformed."""
 
 
 @dataclass(frozen=True)
-class PilotSource:
-    """The minimal provenance needed to process one verified pilot source."""
+class RandsSource:
+    """Canonical provenance for one available source in the audited corpus."""
 
     source_sha256: str
     label: str
@@ -60,7 +54,7 @@ class PilotSource:
 
 @dataclass(frozen=True)
 class ExeManifestRow:
-    """One source attempt, including failures that did not produce EXE bytes."""
+    """One completed source attempt, including extraction failures."""
 
     source_sha256: str
     label: str
@@ -80,8 +74,6 @@ class ExeManifestRow:
 
 @dataclass(frozen=True)
 class _SourceAttempt:
-    """One source result plus the bytes read while verifying its identity."""
-
     row: ExeManifestRow
     source_bytes_read: int
 
@@ -98,6 +90,10 @@ def _validate_representation_root(path: Path) -> None:
         )
 
 
+def _validate_state_path(path: Path) -> None:
+    _validate_representation_root(path.parent)
+
+
 def _validate_summary_path(path: Path) -> None:
     resolved = path.expanduser().resolve()
     try:
@@ -108,69 +104,111 @@ def _validate_summary_path(path: Path) -> None:
         raise RandsExeError("Summary paths inside the repository must be under reports/.")
 
 
-def load_pilot_sources(path: Path) -> list[PilotSource]:
-    """Load a locally generated pilot manifest without accepting provider paths."""
-    try:
-        handle = path.open(newline="", encoding="utf-8")
-    except OSError as error:
-        raise RandsExeError(f"Could not read pilot manifest: {path}") from error
+def enumerate_rands_sources(
+    config: RandsDatasetConfig, root: Path | RandsDatasetLocations
+) -> list[RandsSource]:
+    """Return all available sources only after the release contract passes."""
+    summary, metadata, present_shas = inspect_rands(config, root, hash_mode="none")
+    if not summary["contract"]["passed"]:
+        details = "; ".join(summary["contract"]["mismatches"])
+        raise RandsExeError(
+            f"RanDS release contract failed; resolve the audit findings first: {details}"
+        )
+    return [
+        RandsSource(
+            record.sha256, record.label, record.family or "", record.relative_path, config.snapshot
+        )
+        for source_sha256, record in sorted(metadata.records.items())
+        if source_sha256 in present_shas
+    ]
 
-    with handle:
-        reader = csv.DictReader(handle)
-        fieldnames = set(reader.fieldnames or ())
-        missing = sorted(PILOT_MANIFEST_FIELDS - fieldnames)
-        if missing:
+
+def _source_list_digest(sources: list[RandsSource]) -> str:
+    digest = sha256()
+    for source in sources:
+        digest.update(
+            f"{source.source_sha256}\t{source.label}\t{source.family}\t"
+            f"{source.relative_path.as_posix()}\t{source.snapshot}".encode()
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _connect_state(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous=FULL")
+    return connection
+
+
+def _initialize_state(
+    state_path: Path, sources: list[RandsSource], *, resume: bool
+) -> sqlite3.Connection:
+    _validate_state_path(state_path)
+    existed = state_path.exists()
+    if existed and not resume:
+        raise RandsExeError(
+            "Extraction state already exists; pass --resume to continue that exact job."
+        )
+    if not existed and resume:
+        raise RandsExeError("Cannot resume because the extraction state database does not exist.")
+    connection = _connect_state(state_path)
+    digest = _source_list_digest(sources)
+    if existed:
+        try:
+            stored = dict(connection.execute("SELECT key, value FROM job").fetchall())
+        except sqlite3.DatabaseError as error:
+            connection.close()
+            raise RandsExeError(f"Invalid extraction state database: {state_path}") from error
+        snapshot = sources[0].snapshot if sources else ""
+        if stored.get("source_list_digest") != digest or stored.get("snapshot") != snapshot:
+            connection.close()
             raise RandsExeError(
-                f"Pilot manifest is missing required fields: {', '.join(missing)}."
+                "Extraction state does not match the audited source list or dataset snapshot. "
+                "Start a new job with a new --state-db path."
             )
-
-        sources: list[PilotSource] = []
-        seen: set[str] = set()
-        for row_number, row in enumerate(reader, start=2):
-            source_sha256 = (row["source_sha256"] or "").lower()
-            if not SHA256_PATTERN.fullmatch(source_sha256):
-                raise RandsExeError(f"Invalid source SHA-256 in pilot manifest row {row_number}.")
-            if source_sha256 in seen:
-                raise RandsExeError(
-                    f"Duplicate source SHA-256 in pilot manifest row {row_number}."
-                )
-            if row["label"] not in {"benign", "ransomware"}:
-                raise RandsExeError(f"Invalid label in pilot manifest row {row_number}.")
-            if row["source_hash_verified"] != "1":
-                raise RandsExeError(
-                    f"Pilot manifest row {row_number} was not source-hash-verified."
-                )
-
-            relative_path = Path(row["relative_path"] or "")
-            expected_path = Path(source_sha256[:2]) / source_sha256
-            if relative_path != expected_path:
-                raise RandsExeError(
-                    f"Unexpected source path in pilot manifest row {row_number}; "
-                    "only the canonical SHA-256 shard path is accepted."
-                )
-            seen.add(source_sha256)
-            sources.append(
-                PilotSource(
-                    source_sha256=source_sha256,
-                    label=row["label"],
-                    family=row["family"] or "",
-                    relative_path=relative_path,
-                    snapshot=row["snapshot"],
-                )
-            )
-    return sources
+        return connection
+    connection.executescript(
+        """
+        CREATE TABLE job (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE source (
+          source_sha256 TEXT PRIMARY KEY, label TEXT NOT NULL, family TEXT NOT NULL,
+          relative_path TEXT NOT NULL, snapshot TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0,
+          source_hash_status TEXT, extraction_status TEXT, extraction_warnings TEXT,
+          section_count INTEGER, executable_section_count INTEGER, extracted_size INTEGER,
+          representation_sha256 TEXT, representation_relative_path TEXT,
+          representation_reused INTEGER, runtime_ms REAL, source_bytes_read INTEGER
+        );
+        CREATE INDEX source_pending ON source(completed, source_sha256);
+        """
+    )
+    connection.executemany(
+        "INSERT INTO source (source_sha256, label, family, relative_path, snapshot) VALUES (?, ?, ?, ?, ?)",
+        [
+            (s.source_sha256, s.label, s.family, s.relative_path.as_posix(), s.snapshot)
+            for s in sources
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO job (key, value) VALUES (?, ?)",
+        (
+            ("snapshot", sources[0].snapshot if sources else ""),
+            ("source_list_digest", digest),
+            ("source_count", str(len(sources))),
+        ),
+    )
+    connection.commit()
+    return connection
 
 
 def _write_representation(path: Path, content: bytes, digest: str) -> bool:
-    """Write a representation once; retain an existing identical result for safe resume."""
+    """Write once, retaining an existing identical output for a safe restart."""
     if path.exists():
-        existing = path.read_bytes()
-        if sha256(existing).hexdigest() != digest:
-            raise RandsExeError(
-                f"Existing representation does not match the newly extracted bytes: {path}"
-            )
+        if sha256(path.read_bytes()).hexdigest() != digest:
+            raise RandsExeError(f"Existing representation conflicts with extracted bytes: {path}")
         return True
-
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_name(f".{path.name}.tmp")
     temporary_path.write_bytes(content)
@@ -179,41 +217,32 @@ def _write_representation(path: Path, content: bytes, digest: str) -> bool:
 
 
 def _failure_row(
-    source: PilotSource,
-    *,
-    source_hash_status: str,
-    extraction_status: str,
-    runtime_ms: float,
+    source: RandsSource, *, source_hash_status: str, extraction_status: str, runtime_ms: float
 ) -> ExeManifestRow:
     return ExeManifestRow(
-        source_sha256=source.source_sha256,
-        label=source.label,
-        family=source.family,
-        source_hash_status=source_hash_status,
-        extraction_status=extraction_status,
-        extraction_warnings=(),
-        section_count=0,
-        executable_section_count=0,
-        extracted_size=0,
-        representation_sha256=None,
-        representation_relative_path=None,
-        representation_reused=False,
-        runtime_ms=runtime_ms,
-        snapshot=source.snapshot,
+        source.source_sha256,
+        source.label,
+        source.family,
+        source_hash_status,
+        extraction_status,
+        (),
+        0,
+        0,
+        0,
+        None,
+        None,
+        False,
+        runtime_ms,
+        source.snapshot,
     )
 
 
 def _extract_one_source(
-    dataset_config: RandsDatasetConfig,
-    root: Path,
-    source: PilotSource,
-    representation_root: Path,
+    dataset_config: RandsDatasetConfig, root: Path, source: RandsSource, representation_root: Path
 ) -> _SourceAttempt:
-    """Re-verify, extract, and persist one source without hiding a failure."""
     started = time.perf_counter()
-    source_path = root / dataset_config.samples_dir / source.relative_path
     try:
-        content = source_path.read_bytes()
+        content = (root / dataset_config.samples_dir / source.relative_path).read_bytes()
     except OSError:
         return _SourceAttempt(
             _failure_row(
@@ -222,9 +251,8 @@ def _extract_one_source(
                 extraction_status="read_error",
                 runtime_ms=(time.perf_counter() - started) * 1000,
             ),
-            source_bytes_read=0,
+            0,
         )
-
     source_bytes_read = len(content)
     if sha256(content).hexdigest() != source.source_sha256:
         return _SourceAttempt(
@@ -234,86 +262,129 @@ def _extract_one_source(
                 extraction_status="source_hash_mismatch",
                 runtime_ms=(time.perf_counter() - started) * 1000,
             ),
-            source_bytes_read=source_bytes_read,
+            source_bytes_read,
         )
-
     extracted = extract_executable_sections(content)
     reused = False
-    relative_representation_path: str | None = None
+    relative_path: str | None = None
     if extracted.status == "success":
-        assert extracted.extracted_bytes is not None
-        assert extracted.representation_sha256 is not None
-        representation_path = representation_root / f"{source.source_sha256}.bin"
-        reused = _write_representation(
-            representation_path, extracted.extracted_bytes, extracted.representation_sha256
+        assert (
+            extracted.extracted_bytes is not None and extracted.representation_sha256 is not None
         )
-        relative_representation_path = representation_path.name
-
+        relative_path = (Path(source.source_sha256[:2]) / f"{source.source_sha256}.bin").as_posix()
+        reused = _write_representation(
+            representation_root / relative_path,
+            extracted.extracted_bytes,
+            extracted.representation_sha256,
+        )
     return _SourceAttempt(
         ExeManifestRow(
-            source_sha256=source.source_sha256,
-            label=source.label,
-            family=source.family,
-            source_hash_status="verified",
-            extraction_status=extracted.status,
-            extraction_warnings=extracted.warnings,
-            section_count=extracted.section_count,
-            executable_section_count=extracted.executable_section_count,
-            extracted_size=extracted.extracted_size,
-            representation_sha256=extracted.representation_sha256,
-            representation_relative_path=relative_representation_path,
-            representation_reused=reused,
-            runtime_ms=(time.perf_counter() - started) * 1000,
-            snapshot=source.snapshot,
+            source.source_sha256,
+            source.label,
+            source.family,
+            "verified",
+            extracted.status,
+            extracted.warnings,
+            extracted.section_count,
+            extracted.executable_section_count,
+            extracted.extracted_size,
+            extracted.representation_sha256,
+            relative_path,
+            reused,
+            (time.perf_counter() - started) * 1000,
+            source.snapshot,
         ),
-        source_bytes_read=source_bytes_read,
+        source_bytes_read,
     )
 
 
-def extract_rands_exe(
-    dataset_config: RandsDatasetConfig,
-    root: Path,
-    sources: list[PilotSource],
-    representation_root: Path,
-) -> tuple[list[ExeManifestRow], dict[str, Any]]:
-    """Re-verify and statically extract every requested pilot source exactly once."""
-    _validate_representation_root(representation_root)
-    rows: list[ExeManifestRow] = []
-    source_bytes_read = 0
-    for source in sources:
-        attempt = _extract_one_source(dataset_config, root, source, representation_root)
-        rows.append(attempt.row)
-        source_bytes_read += attempt.source_bytes_read
+def _store_attempt(connection: sqlite3.Connection, attempt: _SourceAttempt) -> None:
+    row = attempt.row
+    connection.execute(
+        """
+        UPDATE source SET completed=1, source_hash_status=?, extraction_status=?, extraction_warnings=?, section_count=?, executable_section_count=?, extracted_size=?, representation_sha256=?, representation_relative_path=?, representation_reused=?, runtime_ms=?, source_bytes_read=? WHERE source_sha256=?
+        """,
+        (
+            row.source_hash_status,
+            row.extraction_status,
+            ";".join(row.extraction_warnings),
+            row.section_count,
+            row.executable_section_count,
+            row.extracted_size,
+            row.representation_sha256,
+            row.representation_relative_path,
+            int(row.representation_reused),
+            row.runtime_ms,
+            attempt.source_bytes_read,
+            row.source_sha256,
+        ),
+    )
+    connection.commit()
 
-    status_counts = Counter(row.extraction_status for row in rows)
-    warning_counts = Counter(warning for row in rows for warning in row.extraction_warnings)
+
+def _row_from_state(row: sqlite3.Row) -> ExeManifestRow:
+    return ExeManifestRow(
+        row["source_sha256"],
+        row["label"],
+        row["family"],
+        row["source_hash_status"],
+        row["extraction_status"],
+        tuple(filter(None, (row["extraction_warnings"] or "").split(";"))),
+        row["section_count"],
+        row["executable_section_count"],
+        row["extracted_size"],
+        row["representation_sha256"],
+        row["representation_relative_path"],
+        bool(row["representation_reused"]),
+        row["runtime_ms"],
+        row["snapshot"],
+    )
+
+
+def _completed_rows(connection: sqlite3.Connection) -> list[ExeManifestRow]:
+    return [
+        _row_from_state(row)
+        for row in connection.execute(
+            "SELECT * FROM source WHERE completed=1 ORDER BY source_sha256"
+        )
+    ]
+
+
+def _summary(connection: sqlite3.Connection, rows: list[ExeManifestRow]) -> dict[str, Any]:
+    total = connection.execute("SELECT COUNT(*) FROM source").fetchone()[0]
+    source_bytes = connection.execute(
+        "SELECT COALESCE(SUM(source_bytes_read), 0) FROM source"
+    ).fetchone()[0]
+    statuses = Counter(row.extraction_status for row in rows)
+    warnings = Counter(warning for row in rows for warning in row.extraction_warnings)
     successful = [row for row in rows if row.extraction_status == "success"]
-    representations: dict[str, list[ExeManifestRow]] = defaultdict(list)
+    groups: dict[str, list[ExeManifestRow]] = defaultdict(list)
     for row in successful:
         assert row.representation_sha256 is not None
-        representations[row.representation_sha256].append(row)
-    duplicate_groups = [group for group in representations.values() if len(group) > 1]
-
-    summary = {
+        groups[row.representation_sha256].append(row)
+    duplicates = [group for group in groups.values() if len(group) > 1]
+    return {
+        "job": {
+            "sources_total": total,
+            "sources_completed": len(rows),
+            "sources_pending": total - len(rows),
+            "complete": total == len(rows),
+        },
         "sources": {
             "attempted": len(rows),
-            "source_bytes_read": source_bytes_read,
+            "source_bytes_read": source_bytes,
             "source_hash_verified": sum(row.source_hash_status == "verified" for row in rows),
             "source_hash_mismatches": sum(row.source_hash_status == "mismatch" for row in rows),
             "read_errors": sum(row.source_hash_status == "read_error" for row in rows),
         },
         "extraction": {
-            "statuses": dict(sorted(status_counts.items())),
-            "warnings": dict(sorted(warning_counts.items())),
+            "statuses": dict(sorted(statuses.items())),
+            "warnings": dict(sorted(warnings.items())),
             "successful": len(successful),
             "failed": len(rows) - len(successful),
             "representation_bytes": sum(row.extracted_size for row in successful),
             "reused_representations": sum(row.representation_reused for row in successful),
             "runtime_ms_total": round(sum(row.runtime_ms for row in rows), 3),
-            "runtime_ms_mean": round(sum(row.runtime_ms for row in rows) / len(rows), 3)
-            if rows
-            else 0.0,
-            "runtime_ms_max": round(max((row.runtime_ms for row in rows), default=0.0), 3),
         },
         "labels": {
             label: dict(
@@ -324,14 +395,129 @@ def extract_rands_exe(
             for label in ("benign", "ransomware")
         },
         "representation_duplicates": {
-            "groups": len(duplicate_groups),
-            "extra_sources": sum(len(group) - 1 for group in duplicate_groups),
+            "groups": len(duplicates),
+            "extra_sources": sum(len(group) - 1 for group in duplicates),
             "cross_label_groups": sum(
-                len({row.label for row in group}) > 1 for group in duplicate_groups
+                len({row.label for row in group}) > 1 for group in duplicates
             ),
         },
     }
-    return rows, summary
+
+
+def _format_duration(seconds: float) -> str:
+    """Render a compact elapsed or estimated duration for terminal progress."""
+    rounded = max(0, round(seconds))
+    hours, remainder = divmod(rounded, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:d}:{seconds:02d}"
+
+
+def _write_progress(
+    connection: sqlite3.Connection,
+    *,
+    total: int,
+    initial_completed: int,
+    initial_bytes: int,
+    started: float,
+) -> None:
+    """Write aggregate progress to stderr while preserving JSON stdout for automation."""
+    completed, bytes_read, successful = connection.execute(
+        """
+        SELECT COUNT(*), COALESCE(SUM(source_bytes_read), 0),
+          COALESCE(SUM(extraction_status = 'success'), 0)
+        FROM source WHERE completed=1
+        """
+    ).fetchone()
+    elapsed = time.perf_counter() - started
+    processed = completed - initial_completed
+    rate = processed / elapsed if elapsed else 0.0
+    eta = (total - completed) / rate if rate else None
+    mib_per_second = (bytes_read - initial_bytes) / elapsed / (1024 * 1024) if elapsed else 0.0
+    percentage = completed / total * 100 if total else 100.0
+    failed = completed - successful
+    eta_text = _format_duration(eta) if eta is not None else "calculating"
+    print(
+        f"[extract-exe] {completed:,}/{total:,} ({percentage:.1f}%) | "
+        f"success: {successful:,} | failed: {failed:,} | "
+        f"{mib_per_second:.1f} MiB/s | elapsed: {_format_duration(elapsed)} | eta: {eta_text}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def extract_rands_exe(
+    dataset_config: RandsDatasetConfig,
+    root: Path | RandsDatasetLocations,
+    representation_root: Path,
+    state_path: Path,
+    *,
+    resume: bool = False,
+    limit: int | None = None,
+    progress_every: int = 100,
+) -> tuple[list[ExeManifestRow], dict[str, Any]]:
+    """Extract the audited corpus, committing every source result before continuing."""
+    if limit is not None and limit <= 0:
+        raise RandsExeError("--limit must be a positive integer.")
+    if progress_every <= 0:
+        raise RandsExeError("--progress-every must be a positive integer.")
+    _validate_representation_root(representation_root)
+    locations = (
+        root
+        if isinstance(root, RandsDatasetLocations)
+        else RandsDatasetLocations(raw_root=root, metadata_root=root)
+    )
+    sources = enumerate_rands_sources(dataset_config, locations)
+    connection = _initialize_state(state_path, sources, resume=resume)
+    try:
+        total = len(sources)
+        initial_completed, initial_bytes = connection.execute(
+            "SELECT COUNT(*), COALESCE(SUM(source_bytes_read), 0) FROM source WHERE completed=1"
+        ).fetchone()
+        started = time.perf_counter()
+        query = "SELECT source_sha256, label, family, relative_path, snapshot FROM source WHERE completed=0 ORDER BY source_sha256"
+        pending = (
+            connection.execute(query + " LIMIT ?", (limit,))
+            if limit is not None
+            else connection.execute(query)
+        )
+        processed = 0
+        for item in pending:
+            source = RandsSource(
+                item["source_sha256"],
+                item["label"],
+                item["family"],
+                Path(item["relative_path"]),
+                item["snapshot"],
+            )
+            _store_attempt(
+                connection,
+                _extract_one_source(
+                    dataset_config, locations.raw_root, source, representation_root
+                ),
+            )
+            processed += 1
+            if processed % progress_every == 0:
+                _write_progress(
+                    connection,
+                    total=total,
+                    initial_completed=initial_completed,
+                    initial_bytes=initial_bytes,
+                    started=started,
+                )
+        if processed and processed % progress_every:
+            _write_progress(
+                connection,
+                total=total,
+                initial_completed=initial_completed,
+                initial_bytes=initial_bytes,
+                started=started,
+            )
+        rows = _completed_rows(connection)
+        return rows, _summary(connection, rows)
+    finally:
+        connection.close()
 
 
 def _render_exe_manifest(rows: list[ExeManifestRow]) -> bytes:
@@ -361,27 +547,23 @@ def _render_exe_manifest(rows: list[ExeManifestRow]) -> bytes:
 
 
 def write_rands_exe_outputs(
-    rows: list[ExeManifestRow],
-    summary: dict[str, Any],
-    manifest_path: Path,
-    summary_path: Path,
+    rows: list[ExeManifestRow], summary: dict[str, Any], manifest_path: Path, summary_path: Path
 ) -> dict[str, Any]:
-    """Write ignored EXE metadata and aggregate evidence after every source was attempted."""
+    """Export durable completed state as a private manifest and safe summary."""
     _validate_manifest_path(manifest_path)
     _validate_summary_path(summary_path)
     manifest = _render_exe_manifest(rows)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_bytes(manifest)
-
-    completed_summary = {
+    completed = {
         **summary,
         "manifest": {"rows": len(rows), "sha256": sha256(manifest).hexdigest()},
     }
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(
-        json.dumps(completed_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(completed, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    return completed_summary
+    return completed
 
 
 def exe_console_summary(summary: dict[str, Any]) -> dict[str, Any]:

@@ -2,6 +2,7 @@ dataset:
   name: rands
   snapshot: "2026-09-02"
   root_env: MALWEAVE_RANDS_DIR
+  metadata_root_env: MALWEAVE_RANDS_METADATA_DIR
 
 layout:
   benign_csv: Benign.csv

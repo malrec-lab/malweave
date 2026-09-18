@@ -14,6 +14,7 @@ from malweave import cli
 from malweave.cli import main
 from malweave.data.dataset_config import (
     RandsDatasetConfig,
+    RandsDatasetLocations,
     RandsExpectedCounts,
     RandsProtocol,
 )
@@ -152,6 +153,24 @@ def test_inspect_normalizes_schema_and_reports_missing_metadata(tmp_path: Path) 
     assert summary["content_hashes"]["mismatches"] == 0
     assert len(metadata.records) == 3
     assert len(present_shas) == 2
+
+
+def test_inspect_accepts_separate_raw_and_metadata_roots(tmp_path: Path) -> None:
+    root, config, _ = _fixture(tmp_path)
+    raw_root = tmp_path / "raw"
+    metadata_root = tmp_path / "metadata"
+    raw_root.mkdir()
+    metadata_root.mkdir()
+    (root / "dataset").rename(raw_root / "dataset")
+    (root / "Benign.csv").rename(metadata_root / "Benign.csv")
+    (root / "Ransomware.csv").rename(metadata_root / "Ransomware.csv")
+
+    summary, _, _ = inspect_rands(
+        config,
+        RandsDatasetLocations(raw_root=raw_root, metadata_root=metadata_root),
+    )
+
+    assert summary["contract"]["passed"] is True
 
 
 def test_inspect_accepts_rows_matching_the_documented_ransomware_header(tmp_path: Path) -> None:

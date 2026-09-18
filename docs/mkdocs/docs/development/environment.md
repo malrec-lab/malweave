@@ -72,10 +72,13 @@ when the `malweave` package is imported, so library imports remain side-effect f
 | `test` | pytest and test-only utilities | Through `dev` |
 | `lint` | Ruff and static quality tools | Through `dev` |
 | `docs` | MkDocs and documentation tooling | Through `dev` |
-| `train` | Future model-training dependencies | No |
-| `dev` | Includes `test`, `lint`, and `docs` | Yes |
+| `train` | Model-training dependencies: PyTorch, Transformers, and Tokenizers | Through `dev` |
+| `dev` | Includes `test`, `lint`, `docs`, and `train` | Yes |
 
-The empty `train` group reserves a clear boundary for future ML frameworks. Introduce dataset- or model-specific groups only when their dependency stacks are large, optional, or mutually incompatible.
+The `train` group is the Python-level contract for supervised model experiments. CUDA drivers and
+Mamba native fast kernels are system-specific prerequisites and must be verified in the target run
+environment. Introduce dataset- or
+model-specific groups only when their dependency stacks are large, optional, or mutually incompatible.
 
 ## Add or Change Dependencies
 

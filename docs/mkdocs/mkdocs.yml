@@ -3,6 +3,20 @@ site_description: Independent research documentation for malware language modeli
 site_author: MalWeave contributors
 theme:
   name: readthedocs
+plugins:
+  - search
+  - mermaid2:
+      version: "10.4.0"
+      arguments:
+        theme: base
+        themeVariables:
+          fontSize: 20px
+        flowchart:
+          htmlLabels: true
+          nodeSpacing: 52
+          rankSpacing: 72
+          useMaxWidth: true
+          wrappingWidth: 250
 nav:
   - Home: index.md
   - Getting started:
@@ -11,7 +25,8 @@ nav:
   - Workflows:
       - LMLM on RanDS: workflows/lmlm-rands.md
       - LMLM on RanDS protocol: workflows/lmlm-rands-protocol.md
-      - LMLM on RanDS roadmap: workflows/lmlm-rands-roadmap.md
+      - LMLM on RanDS architecture: workflows/lmlm-rands-architecture.md
+      - Research workstreams: workflows/research-workstreams.md
   - Development:
       - Environment and dependencies: development/environment.md
   - Project structure: project-structure.md

@@ -32,6 +32,14 @@ class RandsExpectedCounts:
 
 
 @dataclass(frozen=True)
+class RandsDatasetLocations:
+    """Separate local roots for immutable bytes and shared metadata."""
+
+    raw_root: Path
+    metadata_root: Path
+
+
+@dataclass(frozen=True)
 class RandsDatasetConfig:
     """Paths, release identity, and protocols for one RanDS snapshot."""
 
@@ -43,9 +51,10 @@ class RandsDatasetConfig:
     samples_dir: str
     expected: RandsExpectedCounts
     protocols: dict[str, RandsProtocol]
+    metadata_root_env: str | None = None
 
     def resolve_root(self, override: Path | None = None) -> Path:
-        """Resolve the local corpus without storing machine paths in Git."""
+        """Resolve the raw corpus root; retained for combined-root compatibility."""
         if override is not None:
             return override.expanduser().resolve()
 
@@ -55,6 +64,22 @@ class RandsDatasetConfig:
                 f"Set {self.root_env} or pass --root to locate the RanDS corpus."
             )
         return Path(value).expanduser().resolve()
+
+    def resolve_locations(
+        self,
+        raw_override: Path | None = None,
+        metadata_override: Path | None = None,
+    ) -> RandsDatasetLocations:
+        """Resolve separate raw and metadata roots without recording machine paths in Git."""
+        raw_root = self.resolve_root(raw_override)
+        if metadata_override is not None:
+            metadata_root = metadata_override.expanduser().resolve()
+        elif self.metadata_root_env is None:
+            metadata_root = raw_root
+        else:
+            value = os.environ.get(self.metadata_root_env)
+            metadata_root = Path(value).expanduser().resolve() if value else raw_root
+        return RandsDatasetLocations(raw_root=raw_root, metadata_root=metadata_root)
 
 
 def _mapping(value: Any, key: str) -> dict[str, Any]:
@@ -67,6 +92,15 @@ def _required_string(mapping: dict[str, Any], key: str) -> str:
     value = mapping.get(key)
     if not isinstance(value, str) or not value.strip():
         raise DatasetConfigError(f"{key} must be a non-empty string.")
+    return value
+
+
+def _optional_string(mapping: dict[str, Any], key: str) -> str | None:
+    value = mapping.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise DatasetConfigError(f"{key} must be a non-empty string or null.")
     return value
 
 
@@ -125,4 +159,5 @@ def load_rands_dataset_config(path: Path) -> RandsDatasetConfig:
             labels=labels,
         ),
         protocols=protocols,
+        metadata_root_env=_optional_string(dataset, "metadata_root_env"),
     )
