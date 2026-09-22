@@ -416,6 +416,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return a process exit status."""
+    if sys.platform == "win32":
+        print("error: Windows is unsupported; run MalWeave on macOS or Linux.", file=sys.stderr)
+        return 2
     parser = _parser()
     args = parser.parse_args(argv)
     _load_project_environment()

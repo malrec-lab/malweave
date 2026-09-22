@@ -6,8 +6,8 @@ MalWeave treats environment changes as part of the research record. A pull reque
 
 - Use uv 0.11.9; `pyproject.toml` rejects other uv versions.
 - Use CPython 3.12.12 for normal development and canonical experiment setup.
-- Keep code compatible with Python 3.10 through 3.12. CI tests Python 3.10 on Ubuntu and Python
-  3.12.12 on Ubuntu, macOS, and Windows.
+- Keep code compatible with Python 3.10 through 3.12 on supported POSIX platforms. CI tests Python
+  3.10 on Ubuntu and CPython 3.12.12 on Ubuntu and macOS; Windows is unsupported.
 - Create the environment with `uv sync --locked`. Do not install project tools into `.venv` with `pip`, because that creates state not represented by `uv.lock`.
 - Run `make check` before opening or updating a pull request.
 
@@ -62,16 +62,6 @@ make check
 ```
 
 `make check` is non-mutating. Use `make format` when you intentionally want Ruff to fix lint and formatting issues, then inspect the diff and run `make check` again.
-
-On Windows without `make`, run the commands used by CI directly:
-
-```powershell
-uv lock --check
-uv run --locked ruff check malweave tests
-uv run --locked ruff format --check malweave tests
-uv run --locked pytest -v
-uv run --locked python -m mkdocs build --strict --config-file docs/mkdocs/mkdocs.yml
-```
 
 Update maintained guidance under `docs/mkdocs/docs/` when behavior or workflow changes. Build documentation strictly so broken links and navigation issues fail locally and in CI.
 

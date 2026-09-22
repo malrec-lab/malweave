@@ -8,6 +8,9 @@ Raw PE files may be live malware. The repository only performs static reads and 
 execute, preview, upload, commit, or redistribute raw samples. Keep raw data, private manifests,
 representations, checkpoints, and reports outside Git.
 
+MalWeave supports Linux and macOS only. Windows is unsupported: the CLI rejects it because the
+worker scripts and Ghidra timeout cleanup require POSIX process semantics.
+
 ## Start Here
 
 From the repository root:

@@ -9,10 +9,11 @@ uv sync --locked
 make check
 ```
 
-The canonical environment is CPython 3.12.12, recorded in `.python-version`. The package supports
-Python 3.10 through 3.12. CI checks Python 3.10 on Ubuntu and Python 3.12.12 on Ubuntu, macOS, and
-Windows. uv creates `.venv` and installs the exact dependency versions and hashes recorded in
-`uv.lock`; shell activation is optional because Make targets use `uv run --locked`.
+The canonical environment is CPython 3.12.12, recorded in `.python-version`. MalWeave supports
+macOS and Linux with Python 3.10 through 3.12. CI checks Python 3.10 on Ubuntu and Python 3.12.12
+on Ubuntu and macOS. Windows is unsupported; the CLI exits before starting a workflow. uv creates
+`.venv` and installs the exact dependency versions and hashes recorded in `uv.lock`; shell
+activation is optional because Make targets use `uv run --locked`.
 
 Do not use `pip install` inside the project environment. Add or update dependencies through uv so `pyproject.toml` and `uv.lock` remain synchronized. Ghidra, its JDK, `file`, `diec`, raw corpora, GPU drivers, and other system tools are not installed by this command; see [Environment and dependencies](development/environment.md#external-analysis-tools) before running data extraction.
 

@@ -9,8 +9,8 @@ MalWeave uses uv to make the Python environment repeatable across developer mach
 | uv | Exactly 0.11.9, enforced by `tool.uv.required-version` |
 | Canonical Python | CPython 3.12.12, recorded in `.python-version` |
 | Supported Python | 3.10 through 3.12, declared in `project.requires-python` |
-| CI operating systems | Ubuntu, macOS, and Windows GitHub-hosted runners |
-| CI compatibility | Python 3.10 on Ubuntu; CPython 3.12.12 on all three operating systems |
+| Supported operating systems | Linux and macOS only; Windows is unsupported |
+| CI compatibility | Python 3.10 on Ubuntu; CPython 3.12.12 on Ubuntu and macOS |
 | Accelerator runtime | CPU-only foundation; CUDA/framework matrix will be defined with the first GPU stack |
 
 The canonical version is the default for development and experiments. The minimum-version CI job catches accidental use of newer Python syntax or APIs.
@@ -44,16 +44,8 @@ uv run --locked python --version
 uv run --locked pytest
 ```
 
-`make check` is the concise Unix/macOS entrypoint. Windows developers without `make` can run the
-same non-mutating checks used by CI:
-
-```powershell
-uv lock --check
-uv run --locked ruff check malweave tests
-uv run --locked ruff format --check malweave tests
-uv run --locked pytest -v
-uv run --locked python -m mkdocs build --strict --config-file docs/mkdocs/mkdocs.yml
-```
+`make check` is the supported local quality entrypoint on Linux and macOS. The CLI, shell worker
+scripts, and Ghidra process cleanup are not supported on Windows.
 
 ## Machine-Local Configuration
 
@@ -123,12 +115,6 @@ export GHIDRA_ROOT="${GHIDRA_LAUNCHER%/support/analyzeHeadless}"
 echo "$GHIDRA_ROOT"
 test -x "$GHIDRA_ROOT/support/analyzeHeadless"
 ```
-
-On Windows, the launcher is normally
-`<ghidra-dir>\support\analyzeHeadless.bat`. Ghidra itself supports Windows, but the current
-MalWeave runner has only been validated on POSIX systems because its timeout cleanup uses Unix
-process groups. Use macOS or Linux for the full DIS/DEC corpus until the Windows process cleanup
-path is implemented and tested.
 
 Before a full job, run a ten-source pilot with `--workers 1`. The MalWeave state database records
 the selected launcher path and digest, script digest, cohort, timeouts, and output digests. A
