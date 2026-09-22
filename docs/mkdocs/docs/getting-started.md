@@ -9,12 +9,13 @@ uv sync --locked
 make check
 ```
 
-The canonical environment is CPython 3.12.12, recorded in `.python-version`. The package supports
-Python 3.10 through 3.12. CI checks Python 3.10 on Ubuntu and Python 3.12.12 on Ubuntu, macOS, and
-Windows. uv creates `.venv` and installs the exact dependency versions and hashes recorded in
-`uv.lock`; shell activation is optional because Make targets use `uv run --locked`.
+The canonical environment is CPython 3.12.12, recorded in `.python-version`. MalWeave supports
+macOS and Linux with Python 3.10 through 3.12. CI checks Python 3.10 on Ubuntu and Python 3.12.12
+on Ubuntu and macOS. Windows is unsupported; the CLI exits before starting a workflow. uv creates
+`.venv` and installs the exact dependency versions and hashes recorded in `uv.lock`; shell
+activation is optional because Make targets use `uv run --locked`.
 
-Do not use `pip install` inside the project environment. Add or update dependencies through uv so `pyproject.toml` and `uv.lock` remain synchronized. Read [Environment and dependencies](development/environment.md) for dependency groups, controlled upgrades, CI behavior, and the future GPU policy.
+Do not use `pip install` inside the project environment. Add or update dependencies through uv so `pyproject.toml` and `uv.lock` remain synchronized. Ghidra, its JDK, `file`, `diec`, raw corpora, GPU drivers, and other system tools are not installed by this command; see [Environment and dependencies](development/environment.md#external-analysis-tools) before running data extraction.
 
 ## 2. Select data safely
 
@@ -27,24 +28,21 @@ read-only release audit before preprocessing:
 
 ```bash
 cp .env.example .env
-# Edit .env and set MALWEAVE_RANDS_DIR to the extracted corpus path.
+# Defaults expect the combined corpus at data/raw/rands in this checkout.
+# Edit only when raw data or the fast local disk lives elsewhere.
 uv run --locked malweave data inspect --dataset rands
 ```
 
 The MalWeave CLI loads `.env` automatically. A variable already exported by the shell or supplied
-by CI takes precedence over `.env`, and an explicit `--root` argument takes precedence over both.
+by CI takes precedence over `.env`, and explicit `--root` and `--metadata-root` arguments take
+precedence over both. `--root` means the raw root; omit `--metadata-root` only for the legacy
+combined layout.
 Never commit `.env`; only `.env.example` is versioned.
 
 See [LMLM on RanDS](workflows/lmlm-rands.md) for the release contract, bounded hash
-verification, local manifest creation, and the staged reproduction plan.
+verification, local manifest creation, and the RanDS data workflow.
 
-## 3. Start an experiment
+## 3. Implement a research task
 
-1. Add a reviewed, non-sensitive dataset description in `configs/datasets/`, or use the committed
-   RanDS snapshot config when working with that release.
-2. Add an experiment configuration in `configs/experiments/` before running it.
-3. Implement reusable loaders and transforms in `malweave/data/`; leave exploratory analysis in a numbered notebook.
-4. Keep model components, training, and evaluation code in their separate package modules.
-5. Save the resolved configuration, dataset release identifier, seed, Git commit, metrics, and artifact paths with every local run.
-
-Run `make check` whenever reusable code or documentation changes. Add a focused regression test alongside each new loader, transformation, split policy, or metric.
+After setup, use [Onboarding a Research Task](onboarding.md). It is the single guide for reading
+task boundaries, code placement, focused tests, documentation updates, and review before commit.

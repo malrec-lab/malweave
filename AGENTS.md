@@ -15,8 +15,8 @@
 - Never commit raw samples, sample hashes, sample inventories, private URLs, credentials,
   extracted representations, checkpoints, or run artifacts.
 - Tests must use synthetic, redistributable fixtures. Do not copy real malware bytes into tests.
-- Do not process the full corpus until a bounded pilot passes and reports runtime, failures,
-  output size, and class-specific exclusion counts.
+- Full-corpus processing requires a passing release audit, durable per-source progress, resumable
+  output, and aggregate failure, runtime, output-size, and class-specific coverage reporting.
 
 ## Research Invariants
 
@@ -47,7 +47,7 @@
 
 - Read `docs/mkdocs/docs/datasets/rands.md` before changing RanDS handling.
 - Read `docs/mkdocs/docs/workflows/lmlm-rands.md` before changing the LMLM-on-RanDS workflow.
-- Read `docs/mkdocs/docs/workflows/lmlm-rands-roadmap.md` before planning or implementing any
-  later LMLM-on-RanDS phase. Update its status only after the corresponding gate passes.
+- Read `docs/mkdocs/docs/workflows/research-workstreams.md` before planning an LMLM-on-RanDS task.
+  Keep data preparation, reusable components, and experiments independently scoped.
 - Read `docs/mkdocs/docs/development/environment.md` before changing dependencies or supported
   Python/tool versions.

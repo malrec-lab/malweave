@@ -1,1 +1,1 @@
-"""Training entry points, callbacks, and experiment orchestration."""
+"""Training orchestration for reproducible MalWeave experiments."""

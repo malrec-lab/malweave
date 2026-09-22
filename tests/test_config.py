@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from malweave import config
+from malweave import cli, config
 
 
 class ConfigPathTests(unittest.TestCase):
@@ -33,6 +33,10 @@ class ConfigPathTests(unittest.TestCase):
                 ),
                 configured.resolve(),
             )
+
+    def test_cli_rejects_windows(self) -> None:
+        with patch.object(cli.sys, "platform", "win32"):
+            self.assertEqual(cli.main(["data", "inspect", "--dataset", "rands"]), 2)
 
 
 if __name__ == "__main__":

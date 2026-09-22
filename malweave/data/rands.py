@@ -13,7 +13,7 @@ import re
 from typing import Any, Literal
 
 from malweave.config import PROJECT_ROOT
-from malweave.data.dataset_config import RandsDatasetConfig, RandsProtocol
+from malweave.data.dataset_config import RandsDatasetConfig, RandsDatasetLocations, RandsProtocol
 
 BENIGN_HEADER = (
     "SHA256",
@@ -298,7 +298,8 @@ def _distribution(records: list[RandsRecord]) -> dict[str, Any]:
     }
 
 
-def _sha256(path: Path) -> tuple[str, int]:
+def hash_file_sha256(path: Path) -> tuple[str, int]:
+    """Return a file's SHA-256 and byte count without interpreting its contents."""
     digest = hashlib.sha256()
     bytes_read = 0
     with path.open("rb") as handle:
@@ -312,28 +313,38 @@ def _verify_content_hashes(paths: list[Path]) -> dict[str, int]:
     mismatches = 0
     bytes_read = 0
     for path in paths:
-        digest, sample_bytes = _sha256(path)
+        digest, sample_bytes = hash_file_sha256(path)
         bytes_read += sample_bytes
         if digest != path.name.lower():
             mismatches += 1
     return {"checked": len(paths), "mismatches": mismatches, "bytes_read": bytes_read}
 
 
+def _locations(root: Path | RandsDatasetLocations) -> RandsDatasetLocations:
+    """Accept legacy combined roots while allowing metadata to live separately."""
+    if isinstance(root, RandsDatasetLocations):
+        return root
+    return RandsDatasetLocations(raw_root=root, metadata_root=root)
+
+
 def inspect_rands(
     config: RandsDatasetConfig,
-    root: Path,
+    root: Path | RandsDatasetLocations,
     *,
     hash_mode: HashMode = "none",
 ) -> tuple[dict[str, Any], LoadedRandsMetadata, set[str]]:
     """Audit paths, metadata, distributions, release counts, and optional content hashes."""
-    if not root.is_dir():
-        raise RandsDataError(f"RanDS root is not a directory: {root}")
+    locations = _locations(root)
+    if not locations.raw_root.is_dir():
+        raise RandsDataError(f"RanDS raw root is not a directory: {locations.raw_root}")
+    if not locations.metadata_root.is_dir():
+        raise RandsDataError(f"RanDS metadata root is not a directory: {locations.metadata_root}")
 
-    samples_root = root / config.samples_dir
+    samples_root = locations.raw_root / config.samples_dir
     if not samples_root.is_dir():
         raise RandsDataError(f"RanDS samples directory does not exist: {samples_root}")
 
-    metadata = load_rands_metadata(config, root)
+    metadata = load_rands_metadata(config, locations.metadata_root)
     present_shas: set[str] = set()
     present_by_label: dict[str, list[RandsRecord]] = {"benign": [], "ransomware": []}
     first_path_by_shard: dict[str, Path] = {}

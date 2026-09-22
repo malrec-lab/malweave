@@ -1,0 +1,9 @@
+services:
+  ghidra-e2e:
+    build:
+      context: .
+      dockerfile: docker/e2e/Dockerfile
+    environment:
+      GHIDRA_DIR: /opt/ghidra
+      MALWEAVE_REPO_DIR: /workspace
+    command: ["bash", "docker/e2e/run.sh"]
