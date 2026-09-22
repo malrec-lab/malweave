@@ -14,7 +14,7 @@ Python 3.10 through 3.12. CI checks Python 3.10 on Ubuntu and Python 3.12.12 on 
 Windows. uv creates `.venv` and installs the exact dependency versions and hashes recorded in
 `uv.lock`; shell activation is optional because Make targets use `uv run --locked`.
 
-Do not use `pip install` inside the project environment. Add or update dependencies through uv so `pyproject.toml` and `uv.lock` remain synchronized. Read [Environment and dependencies](development/environment.md) for dependency groups, controlled upgrades, CI behavior, and the future GPU policy.
+Do not use `pip install` inside the project environment. Add or update dependencies through uv so `pyproject.toml` and `uv.lock` remain synchronized. Ghidra, its JDK, `file`, `diec`, raw corpora, GPU drivers, and other system tools are not installed by this command; see [Environment and dependencies](development/environment.md#external-analysis-tools) before running data extraction.
 
 ## 2. Select data safely
 
@@ -27,8 +27,8 @@ read-only release audit before preprocessing:
 
 ```bash
 cp .env.example .env
-# Edit .env: MALWEAVE_RANDS_DIR points to raw/dataset and
-# MALWEAVE_RANDS_METADATA_DIR points to the directory holding both CSV files.
+# Defaults expect the combined corpus at data/raw/rands in this checkout.
+# Edit only when raw data or the fast local disk lives elsewhere.
 uv run --locked malweave data inspect --dataset rands
 ```
 

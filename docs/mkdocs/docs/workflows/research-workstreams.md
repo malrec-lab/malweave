@@ -29,10 +29,11 @@ the train/validation/test policy for a future experiment.
 | Capability | Status | Evidence |
 | --- | --- | --- |
 | RanDS release audit | Implemented | Read-only metadata/filesystem contract and optional local manifest |
+| PE architecture/obfuscation assessment | Implemented | Full-corpus resumable `file` and three-mode DiE annotations; no source filtering |
 | EXE extraction | Implemented | Full-corpus static extraction with per-source durable state and representation digest |
 | RAW/EXE products | Implemented locally | Full-corpus product manifest, duplicate groups, and aggregate report |
-| DIS representation | Planned | Isolated static disassembly contract to be selected independently |
-| DEC representation | Planned | Bounded decompilation contract to be selected independently |
+| DIS representation | Implemented locally | Resumable Ghidra extraction of metadata-I386 samples; packed metadata retained |
+| DEC representation | Implemented locally | Resumable Ghidra decompilation of metadata-I386 samples; packed metadata retained |
 
 All derived representation manifests preserve source identity, representation digest, status, size,
 and provenance. Raw PE files and private manifests never enter Git. A source or representation

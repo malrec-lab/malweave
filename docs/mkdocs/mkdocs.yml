@@ -27,6 +27,8 @@ nav:
       - LMLM on RanDS protocol: workflows/lmlm-rands-protocol.md
       - LMLM on RanDS architecture: workflows/lmlm-rands-architecture.md
       - Research workstreams: workflows/research-workstreams.md
+      - Distributed Ghidra extraction: workflows/distributed-ghidra.md
+      - Distributed Ghidra quick start: workflows/distributed-ghidra-quickstart.md
   - Development:
       - Environment and dependencies: development/environment.md
   - Project structure: project-structure.md

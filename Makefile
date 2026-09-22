@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: help sync lock lock-check test lint format-check format docs check
+.PHONY: help sync lock lock-check test lint format-check format docs docs-serve e2e-ghidra check
 
 help:
 	@printf '%s\n' \
@@ -12,6 +12,8 @@ help:
 	  'make format-check - verify source and test formatting' \
 	  'make format       - fix lint and formatting issues' \
 	  'make docs         - build MkDocs documentation strictly' \
+	  'make docs-serve   - serve MkDocs locally with live reload' \
+	  'make e2e-ghidra   - boot a clean Linux Ghidra worker and run synthetic PE extraction' \
 	  'make check        - run all non-mutating repository checks'
 
 sync:
@@ -38,5 +40,11 @@ format:
 
 docs:
 	$(UV) run --locked python -m mkdocs build --strict --config-file docs/mkdocs/mkdocs.yml
+
+docs-serve:
+	$(UV) run --locked python -m mkdocs serve --config-file docs/mkdocs/mkdocs.yml
+
+e2e-ghidra:
+	docker compose -f docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from ghidra-e2e
 
 check: lock-check lint format-check test docs
