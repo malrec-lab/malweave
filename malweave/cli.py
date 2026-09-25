@@ -7,9 +7,11 @@ from collections.abc import Sequence
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 from dotenv import load_dotenv
+import yaml
 
 from malweave.config import CONFIGS_DIR, PROJECT_ROOT
 from malweave.data.dataset_config import DatasetConfigError, load_rands_dataset_config
@@ -53,6 +55,9 @@ from malweave.experiments.rands_raw_manifest import (
     freeze_rands_raw_manifest,
     load_rands_raw_manifest_preset,
 )
+from malweave.training.manifest import TrainingManifestError
+from malweave.training.sources import ByteSourceError
+from malweave.training.stage import StageError, stage_manifest_from_s3
 from malweave.training.supervised import (
     SupervisedRunRequest,
     SupervisedTrainingError,
@@ -67,6 +72,106 @@ DOTENV_PATH = PROJECT_ROOT / ".env"
 def _load_project_environment(path: Path | None = None) -> None:
     """Load machine-local settings without overriding the caller's environment."""
     load_dotenv(dotenv_path=path or DOTENV_PATH, override=False)
+
+
+def _experiment_settings(path: Path) -> dict:
+    try:
+        settings = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as error:
+        raise SupervisedTrainingError("Could not read the experiment YAML.") from error
+    if not isinstance(settings, dict):
+        raise SupervisedTrainingError("Experiment YAML must be a mapping.")
+    return settings
+
+
+def _preset_path(settings: dict, preset: str, field: str) -> Path:
+    try:
+        value = settings["data"]["manifest_presets"][preset][field]
+    except (KeyError, TypeError) as error:
+        raise SupervisedTrainingError(f"Preset {preset!r} lacks {field}.") from error
+    if not isinstance(value, str) or not value:
+        raise SupervisedTrainingError(f"Preset {preset!r} has an invalid {field} path.")
+    path = Path(value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def _experiment_root_path() -> Path:
+    return PROJECT_ROOT / "work"
+
+
+def _experiment_name(settings: dict, config_path: Path) -> str:
+    experiment = settings.get("experiment") or {}
+    if not isinstance(experiment, dict):
+        raise SupervisedTrainingError("Experiment settings must be a mapping.")
+    name = experiment.get("name") or config_path.stem
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+        raise SupervisedTrainingError("Experiment name must be a simple path-safe name.")
+    return name
+
+
+def _staging_root(settings: dict, config_path: Path, preset: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", preset):
+        raise SupervisedTrainingError("Preset must be a simple path-safe name.")
+    return _experiment_root_path() / "staged" / _experiment_name(settings, config_path) / preset
+
+
+def _training_request(
+    args: argparse.Namespace, argv: Sequence[str] | None
+) -> SupervisedRunRequest:
+    settings = _experiment_settings(args.experiment)
+    if args.preset and args.split_manifest:
+        raise SupervisedTrainingError("Choose either --preset or --split-manifest.")
+    split_manifest = (
+        _preset_path(settings, args.preset, "manifest") if args.preset else args.split_manifest
+    )
+    if split_manifest is None:
+        raise SupervisedTrainingError("Supply --preset or --split-manifest.")
+    tracks = settings.get("tracks")
+    if not isinstance(tracks, dict):
+        raise SupervisedTrainingError("Experiment YAML lacks tracks.")
+    track = args.track or (next(iter(tracks)) if len(tracks) == 1 else None)
+    if track not in tracks:
+        raise SupervisedTrainingError("Select a track declared in the experiment YAML.")
+    runtime = settings.get("runtime") or {}
+    experiment = settings.get("experiment") or {}
+    if not isinstance(runtime, dict) or not isinstance(experiment, dict):
+        raise SupervisedTrainingError("Experiment and runtime settings must be mappings.")
+    device = args.device or runtime.get("device")
+    accumulation = (
+        args.gradient_accumulation_steps
+        if args.gradient_accumulation_steps is not None
+        else runtime.get("gradient_accumulation_steps")
+    )
+    seed = args.seed if args.seed is not None else experiment.get("seed")
+    if (
+        not isinstance(device, str)
+        or not isinstance(accumulation, int)
+        or not isinstance(seed, int)
+    ):
+        raise SupervisedTrainingError(
+            "Declare device, gradient accumulation, and seed in YAML or CLI."
+        )
+    return SupervisedRunRequest(
+        track=track,
+        config_path=args.experiment,
+        split_manifest_path=split_manifest,
+        raw_root=args.raw_root,
+        exe_root=args.exe_root,
+        artifact_root=args.artifact_root
+        or _experiment_root_path() / "runs" / _experiment_name(settings, args.experiment),
+        run_id=args.run_id,
+        device=device,
+        gradient_accumulation_steps=accumulation,
+        seed=seed,
+        command=" ".join(("malweave", *(argv if argv is not None else sys.argv[1:]))),
+        raw_samples_dir=args.raw_samples_dir,
+        staging_report=args.staging_report
+        or (
+            _staging_root(settings, args.experiment, args.preset) / "staging-summary.json"
+            if args.preset
+            else None
+        ),
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -123,6 +228,24 @@ def _parser() -> argparse.ArgumentParser:
     freeze_raw.add_argument("--seed", default=None)
     freeze_raw.add_argument("--min-year", type=int, default=None)
     freeze_raw.add_argument("--max-year", type=int, default=None)
+
+    stage = experiment_commands.add_parser(
+        "stage-inputs",
+        help="Download and verify a complete frozen S3 split on an isolated training worker.",
+    )
+    stage.add_argument("--experiment", type=Path, default=DEFAULT_MALCONV_RAW_CONFIG)
+    stage.add_argument("--preset", default=None)
+    stage.add_argument("--manifest", type=Path, default=None)
+    stage.add_argument("--manifest-summary", type=Path, default=None)
+    stage.add_argument("--representation", choices=("raw", "exe"), default="raw")
+    stage.add_argument("--bucket-env", default=None)
+    stage.add_argument(
+        "--output-root",
+        type=Path,
+        help="Override <project>/work/staged/<experiment>/<preset>.",
+    )
+    stage.add_argument("--resume", action="store_true")
+    stage.add_argument("--progress-every", type=int, default=100)
 
     inspect = data_commands.add_parser("inspect", help="Audit a local dataset without mutation.")
     inspect.add_argument("--dataset", choices=("rands",), required=True)
@@ -227,17 +350,21 @@ def _parser() -> argparse.ArgumentParser:
         "train",
         help="Train one declared supervised track from a frozen private split.",
     )
-    train.add_argument("--track", choices=("malconvgct", "hrrformer", "mamba"), required=True)
-    train.add_argument("--split-manifest", type=Path, required=True)
+    train.add_argument("--track", choices=("malconvgct", "hrrformer", "mamba"))
+    train.add_argument("--split-manifest", type=Path)
+    train.add_argument("--preset")
     train.add_argument("--experiment", type=Path, required=True)
-    train.add_argument("--raw-root", type=Path, required=True)
-    train.add_argument("--exe-root", type=Path, required=True)
-    train.add_argument("--artifact-root", type=Path, required=True)
+    train.add_argument("--raw-root", type=Path, default=None)
+    train.add_argument("--exe-root", type=Path, default=None)
+    train.add_argument(
+        "--artifact-root", type=Path, help="Override <project>/work/runs/<experiment>."
+    )
     train.add_argument("--run-id", required=True)
-    train.add_argument("--device", required=True, help="Explicit torch device, e.g. cuda:0.")
-    train.add_argument("--gradient-accumulation-steps", type=int, required=True)
-    train.add_argument("--seed", type=int, required=True)
+    train.add_argument("--device", help="Override the declared torch device, e.g. cuda:0.")
+    train.add_argument("--gradient-accumulation-steps", type=int)
+    train.add_argument("--seed", type=int)
     train.add_argument("--raw-samples-dir", default="dataset")
+    train.add_argument("--staging-report", type=Path, default=None)
     extract_exe.add_argument(
         "--representation-dir",
         type=Path,
@@ -571,6 +698,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
+        if args.command == "experiment" and args.experiment_command == "stage-inputs":
+            if args.preset is None and args.manifest is None:
+                raise StageError(
+                    "Choose --preset pilot/full or supply an explicit split manifest."
+                )
+            if (args.manifest is None) != (args.manifest_summary is None):
+                raise StageError("Custom staging needs both --manifest and --manifest-summary.")
+            settings = _experiment_settings(args.experiment)
+            data = settings.get("data") or {}
+            if not isinstance(data, dict):
+                raise StageError("Experiment data settings must be a mapping.")
+            bucket_env = args.bucket_env or data.get("bucket_env")
+            if not isinstance(bucket_env, str) or not bucket_env:
+                raise StageError("Declare the S3 bucket environment variable in YAML or CLI.")
+            bucket = os.environ.get(bucket_env)
+            if not bucket:
+                raise StageError(f"Set {bucket_env} on the isolated training worker.")
+            manifest = args.manifest or _preset_path(settings, args.preset, "manifest")
+            manifest_summary = args.manifest_summary or _preset_path(
+                settings, args.preset, "summary"
+            )
+            output_root = args.output_root or (
+                _staging_root(settings, args.experiment, args.preset) if args.preset else None
+            )
+            if output_root is None:
+                raise StageError("Custom staging needs --output-root.")
+            summary = stage_manifest_from_s3(
+                manifest,
+                manifest_summary,
+                output_root,
+                bucket=bucket,
+                representation=args.representation,
+                resume=args.resume,
+                progress_every=args.progress_every,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
         if args.command == "data" and args.data_command == "inspect":
             config = load_rands_dataset_config(args.config)
             locations = config.resolve_locations(args.root, args.metadata_root)
@@ -696,22 +860,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
         if args.command == "experiment" and args.experiment_command == "train":
-            result = run_supervised_training(
-                SupervisedRunRequest(
-                    track=args.track,
-                    config_path=args.experiment,
-                    split_manifest_path=args.split_manifest,
-                    raw_root=args.raw_root,
-                    exe_root=args.exe_root,
-                    artifact_root=args.artifact_root,
-                    run_id=args.run_id,
-                    device=args.device,
-                    gradient_accumulation_steps=args.gradient_accumulation_steps,
-                    seed=args.seed,
-                    command=" ".join(("malweave", *(argv if argv is not None else sys.argv[1:]))),
-                    raw_samples_dir=args.raw_samples_dir,
-                )
-            )
+            result = run_supervised_training(_training_request(args, argv))
             print(json.dumps(result["metrics"], indent=2, sort_keys=True))
             return 0
     except KeyboardInterrupt:
@@ -732,6 +881,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         RandsS3Error,
         S3InventoryError,
         SupervisedTrainingError,
+        TrainingManifestError,
+        ByteSourceError,
+        StageError,
         OSError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)

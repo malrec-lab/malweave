@@ -54,8 +54,10 @@ equivalent executable code.
 
 The committed experiment contract is `configs/experiments/malconv-raw.yaml`. The read-only
 S3 inventory, release audit, reusable selection options, and example commands are described in
-[S3 inventories and RAW manifests](s3-manifests.md). These steps only list object metadata and
-freeze private split CSVs; they do not yet read or verify source PE bytes.
+[S3 inventories and RAW manifests](s3-manifests.md). Inventory and freezing list metadata only;
+staging on an isolated worker then downloads and verifies **every selected object** before training.
+Use the `pilot` preset first. The `full` preset is a separate cohort and must not be inferred from
+pilot results. Keep staged PE files, SQLite progress, reports, and model artifacts outside Git.
 
 The cohort-selection salt remains unchanged after the experiment was renamed, so the already
 frozen local RAW manifests keep exactly the same rows and ordering.
@@ -76,10 +78,11 @@ within the 1,000-sample pilot. Unlike the paper's 25K/8K train/test dataset, thi
 separate validation year for model selection; neither its sample counts nor its year cutoffs claim
 to reproduce the paper.
 
-The existing supervised runner accepts the `tracks.malconvgct` and `inputs.raw` settings but still
-requires a private local split manifest with EXE comparison columns and local RAW files. The new
-CLI creates a RAW-only split, but the runner does not yet consume it or read S3 objects. Before
-running this config against the S3 corpus, the RAW-only manifest and S3 data reader must be
-integrated and tested. The current CLI
-also requires `--device cuda:0`, `--gradient-accumulation-steps 64`, and `--seed 42` explicitly;
-these arguments must match the YAML.
+The supervised runner accepts the frozen RAW-only split and reads only local, hash-verified
+representations. It requires a passing staging report bound to that exact manifest before any
+S3-origin split can train. Staging remains a distinct command, so an incomplete download cannot
+silently become a smaller training cohort. For a config with one track, `train` reads the track,
+device, seed, and gradient accumulation from YAML; `--preset pilot` selects its frozen split.
+The worker still supplies its staging report, artifact root, and unique run ID. Changing the YAML
+alone is not enough to switch to another labeled dataset: its adapter must produce an audited,
+group-disjoint manifest with the same training schema and declared label mapping.

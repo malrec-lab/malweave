@@ -66,6 +66,40 @@ For a custom cohort, omit `--preset`, give new `--manifest` and `--summary` path
 eligible class proportions. `--label-count` cannot combine with `--total` or `--balanced`.
 Selections fail on a split/class shortfall; they do not borrow rows across time boundaries.
 
+## Stage selected bytes before training
+
+Run the following only on an isolated training worker with restricted S3 access and enough
+encrypted local storage for the **entire selected cohort**. The pilot and full manifests are
+independent. Staging checks the frozen manifest against its passing source audit, downloads every
+selected object, verifies its full SHA-256 and size, and records each source outcome in SQLite.
+It writes an aggregate report even when some objects fail. Resume the same output root after a
+transient failure; do not train until that report passes. By default, staging uses
+`<project>/work/staged/<experiment>/<preset>` and training writes to
+`<project>/work/runs/<experiment>`, independent of the shell's current directory. On a server
+with separate private storage, override these with `--output-root` for staging and
+`--staging-report` plus `--artifact-root` for training. Never commit or open staged PE files.
+
+```sh
+uv run malweave experiment stage-inputs --preset pilot
+uv run malweave experiment stage-inputs --preset pilot --resume
+```
+
+On the same isolated worker, train against the exact frozen split and staging report. The sole
+track, device, seed, and accumulation setting come from `malconv-raw.yaml`; the run directory
+must be new. The trainer prints aggregate batch progress and evaluation phases to stderr while it
+runs; metrics are written at completion. No S3 object is fetched by the training command.
+
+```sh
+uv run malweave experiment train \
+  --experiment configs/experiments/malconv-raw.yaml \
+  --preset pilot \
+  --run-id malconv-raw-pilot-001
+```
+
+For a different cohort, supply its audited split manifest and summary to `stage-inputs`, then
+use the same split manifest and the resulting staging report for `train`. A new dataset still
+needs an adapter that creates trustworthy labels, grouping, source provenance, and an audit.
+
 For another S3 prefix, set `MALWEAVE_S3_BUCKET` and use `malweave data inventory-s3 --prefix
 other/folder/ --state-db ... --manifest ... --summary ...`. Optional `--suffix`, `--min-size`,
 `--max-size`, `--progress-every`, and `--resume` are available. This produces an **unlabeled**

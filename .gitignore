@@ -26,6 +26,7 @@
 /wandb/
 /mlruns/
 /lightning_logs/
+/work/
 
 # Python and test tooling.
 __pycache__/

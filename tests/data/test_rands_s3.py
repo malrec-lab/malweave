@@ -241,6 +241,7 @@ def test_cli_uses_yaml_paths_for_full_and_pilot_presets(
     config_path = tmp_path / "experiment.yaml"
     _config(config_path)
     experiment = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    experiment["data"]["bucket_env"] = "SYNTHETIC_BUCKET"
     experiment["data"]["manifest_inputs"] = {
         "inventory": str(inventory),
         "inventory_summary": str(audit),

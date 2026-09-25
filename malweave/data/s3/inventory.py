@@ -34,6 +34,7 @@ def validate_private_path(path: Path, *, summary: bool = False) -> None:
         relative.parts[:1] == ("reports",)
         if summary
         else relative.parts[:2] in {("data", "interim"), ("data", "processed")}
+        or relative.parts[:1] == ("work",)
     )
     if not allowed:
         kind = "summary" if summary else "restricted manifest/state"

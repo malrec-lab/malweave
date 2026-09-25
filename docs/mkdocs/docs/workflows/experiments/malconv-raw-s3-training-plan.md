@@ -1,15 +1,16 @@
 # MalConv RAW S3 Training Plan
 
-> **Status: proposed infrastructure and feasibility plan.** This document plans S3-backed data
-> access for independent engineering experiments. It follows the separate data, component, and
-> experiment workstreams in [Research Workstreams](../research-workstreams.md); it does not advance
-> the LMLM-on-RanDS roadmap or establish a benchmark by itself.
+> **Status: historical design plan.** The implemented MalConv RAW path now stages the complete
+> selected manifest on an isolated worker before training. Use
+> [S3 inventories and RAW manifests](s3-manifests.md) for current commands and
+> [MalConv RAW](malconv-raw.md) for the current experiment contract. The bounded cache and direct
+> S3 training sections below remain future proposals, not instructions for the present runner.
 
 ## Purpose and non-goals
 
 The goal is to run a bounded, reproducible feasibility experiment from a private, read-only S3
-source without permanently copying the raw PE corpus to a developer workstation or requiring the
-complete corpus on a training VM. The first concrete experiment is
+source without copying raw PEs to a developer workstation. The implemented path stages every
+object in the selected cohort on the isolated training VM before training. The first experiment is
 [MalConv RAW](malconv-raw.md): supervised MalConvGCT classification of the original
 RAW bytes with benign and ransomware labels.
 
@@ -156,8 +157,10 @@ The bounded pilot passes only when all of these are true:
 5. The report includes all requested storage, performance, integrity, and class-specific counts.
 6. Raw sources remain unchanged and are absent from the workstation, repository, tests, and outputs.
 
-## First action when work resumes
+## Current implementation
 
-Next, integrate the frozen RAW-only split with a source-hash-verifying S3 reader on the isolated
-training machine. The metadata-only manifest is not itself proof of byte integrity. Do not
-download the full corpus to a personal workstation or turn this feasibility run into a benchmark.
+The metadata-only manifest does not prove byte integrity. `stage-inputs` now verifies every
+selected object and writes resumable per-source state plus aggregate coverage; `train` requires
+a passing report tied to that manifest. This has synthetic test coverage. The pilot has not been
+run against the private corpus, and the proposed bounded cache and cloud feasibility steps above
+remain open.

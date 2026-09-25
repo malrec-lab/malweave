@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -25,15 +26,8 @@ import yaml
 from malweave.config import PROJECT_ROOT
 from malweave.data.byte_inputs import (
     SPECIAL_TOKENS,
-    collate_exe_tokens,
-    collate_raw_byte_ids,
-    encode_exe_tokens,
-    raw_bytes_to_ids,
-    train_exe_bpe_tokenizer,
     write_private_tokenizer,
 )
-from malweave.data.rands import SHA256_PATTERN
-from malweave.experiments.rands_comparison import SPLIT_FIELDS
 from malweave.models import (
     HRRFormerConfig,
     HRRFormerForSequenceClassification,
@@ -42,6 +36,16 @@ from malweave.models import (
     MambaConfig,
     MambaForSequenceClassification,
 )
+from malweave.training.inputs import ExeInputAdapter, InputAdapter, RawInputAdapter
+from malweave.training.manifest import (
+    TRACK_REPRESENTATIONS,
+    TrainingSample,
+    load_training_manifest,
+)
+from malweave.training.sources import (
+    LocalByteSource,
+    VerifiedByteSource,
+)
 
 
 class SupervisedTrainingError(ValueError):
@@ -49,22 +53,12 @@ class SupervisedTrainingError(ValueError):
 
 
 @dataclass(frozen=True)
-class SplitExample:
-    split: str
-    source_sha256: str
-    label: int
-    raw_relative_path: str
-    exe_relative_path: str
-    exe_representation_sha256: str
-
-
-@dataclass(frozen=True)
 class SupervisedRunRequest:
     track: str
     config_path: Path
     split_manifest_path: Path
-    raw_root: Path
-    exe_root: Path
+    raw_root: Path | None
+    exe_root: Path | None
     artifact_root: Path
     run_id: str
     device: str
@@ -72,6 +66,7 @@ class SupervisedRunRequest:
     seed: int
     command: str | None = None
     raw_samples_dir: str = "dataset"
+    staging_report: Path | None = None
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
@@ -92,9 +87,9 @@ def _private_path(path: Path, label: str) -> None:
         relative = resolved.relative_to(PROJECT_ROOT)
     except ValueError:
         return
-    if tuple(relative.parts[:2]) != ("data", "processed"):
+    if tuple(relative.parts[:2]) != ("data", "processed") and relative.parts[:1] != ("work",):
         raise SupervisedTrainingError(
-            f"{label} inside the repository must be under data/processed."
+            f"{label} inside the repository must be under data/processed or work."
         )
 
 
@@ -107,47 +102,11 @@ def _sha256_file(path: Path) -> str:
         ) from error
 
 
-def load_supervised_split(path: Path) -> list[SplitExample]:
-    """Load the private split and reject malformed or duplicate source rows."""
-    try:
-        handle = path.open(newline="", encoding="utf-8")
-    except OSError as error:
-        raise SupervisedTrainingError(f"Could not read supervised split: {path}") from error
-    labels = {"benign": 0, "ransomware": 1}
-    with handle:
-        reader = csv.DictReader(handle)
-        missing = sorted(set(SPLIT_FIELDS) - set(reader.fieldnames or ()))
-        if missing:
-            raise SupervisedTrainingError(
-                f"Split manifest is missing required fields: {', '.join(missing)}."
-            )
-        examples: list[SplitExample] = []
-        sources: set[str] = set()
-        for row_number, row in enumerate(reader, start=2):
-            source = (row["source_sha256"] or "").lower()
-            exe_digest = (row["exe_representation_sha256"] or "").lower()
-            if (
-                not SHA256_PATTERN.fullmatch(source)
-                or not SHA256_PATTERN.fullmatch(exe_digest)
-                or source in sources
-            ):
-                raise SupervisedTrainingError(
-                    f"Invalid or duplicate source in split row {row_number}."
-                )
-            if row["split"] not in {"train", "validation", "test"} or row["label"] not in labels:
-                raise SupervisedTrainingError(f"Invalid split or label in row {row_number}.")
-            sources.add(source)
-            examples.append(
-                SplitExample(
-                    split=row["split"],
-                    source_sha256=source,
-                    label=labels[row["label"]],
-                    raw_relative_path=row["raw_relative_path"],
-                    exe_relative_path=row["exe_relative_path"],
-                    exe_representation_sha256=exe_digest,
-                )
-            )
-    return examples
+def load_supervised_split(
+    path: Path, representation: str = "raw", *, raw_samples_dir: str = "dataset"
+) -> list[TrainingSample]:
+    """Compatibility entrypoint for normalized, leakage-checked split loading."""
+    return load_training_manifest(path, representation, raw_samples_dir=raw_samples_dir)
 
 
 def _binary_auc(probabilities: list[float], labels: list[int]) -> float | None:
@@ -232,65 +191,23 @@ def _select_threshold(probabilities: list[float], labels: list[int]) -> float:
 class _SupervisedDataset(Dataset[tuple[Tensor, int]]):
     def __init__(
         self,
-        examples: list[SplitExample],
-        track: str,
-        raw_root: Path,
-        raw_samples_dir: str,
-        exe_root: Path,
-        tokenizer: Any | None,
-        max_length: int,
+        examples: list[TrainingSample],
+        source: VerifiedByteSource,
+        adapter: InputAdapter,
     ) -> None:
         self.examples = examples
-        self.track = track
-        self.raw_root = raw_root
-        self.raw_samples_dir = raw_samples_dir
-        self.exe_root = exe_root
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self._verified: set[str] = set()
+        self.source = source
+        self.adapter = adapter
 
     def __len__(self) -> int:
         return len(self.examples)
 
-    def _content(self, example: SplitExample) -> bytes:
-        if self.track == "malconvgct":
-            path = (
-                self.raw_root
-                / self.raw_samples_dir
-                / example.source_sha256[:2]
-                / example.source_sha256
-            )
-        else:
-            path = self.exe_root / example.exe_relative_path
-        try:
-            content = path.read_bytes()
-        except OSError as error:
-            raise SupervisedTrainingError(
-                f"Could not read required representation for {self.track}."
-            ) from error
-        expected_digest = (
-            example.source_sha256
-            if self.track == "malconvgct"
-            else example.exe_representation_sha256
-        )
-        if expected_digest not in self._verified:
-            if sha256(content).hexdigest() != expected_digest:
-                raise SupervisedTrainingError(
-                    f"Representation digest changed for {self.track}; aborting run."
-                )
-            self._verified.add(expected_digest)
-        return content
-
     def __getitem__(self, index: int) -> tuple[Tensor, int]:
         example = self.examples[index]
-        content = self._content(example)
-        if self.track == "malconvgct":
-            return raw_bytes_to_ids(content, self.max_length), example.label
-        assert self.tokenizer is not None
-        return encode_exe_tokens(self.tokenizer, content, self.max_length), example.label
+        return self.adapter.encode(self.source.read(example)), example.label
 
 
-def _partition(examples: Iterable[SplitExample], name: str) -> list[SplitExample]:
+def _partition(examples: Iterable[TrainingSample], name: str) -> list[TrainingSample]:
     selected = [example for example in examples if example.split == name]
     if not selected:
         raise SupervisedTrainingError(f"The frozen split has no {name} rows.")
@@ -358,6 +275,46 @@ def _build_model(
     raise SupervisedTrainingError(f"Unsupported supervised track: {track}.")
 
 
+def _training_source(
+    request: SupervisedRunRequest, representation: str, staged_root: Path | None
+) -> VerifiedByteSource:
+    root = (request.raw_root if representation == "raw" else request.exe_root) or staged_root
+    if root is None:
+        raise SupervisedTrainingError(
+            f"--{'raw' if representation == 'raw' else 'exe'}-root is required for local training."
+        )
+    return VerifiedByteSource(LocalByteSource(root))
+
+
+def _staged_root(request: SupervisedRunRequest, samples: list[TrainingSample]) -> Path | None:
+    """Require a complete staging report before a S3-origin split may train locally."""
+    if not any(sample.object_key for sample in samples):
+        return None
+    if any(not sample.object_key for sample in samples):
+        raise SupervisedTrainingError("A split cannot mix staged S3 and local-only rows.")
+    if request.staging_report is None:
+        raise SupervisedTrainingError(
+            "S3-origin manifests require --staging-report before training."
+        )
+    try:
+        report = json.loads(request.staging_report.read_text(encoding="utf-8"))
+        root = Path(report["output_root"]).expanduser().resolve()
+        passed = (
+            report["passed"] is True
+            and report["manifest_sha256"] == _sha256_file(request.split_manifest_path)
+            and report["selected"] == len(samples)
+            and sum(report["success_by_label"].values()) == len(samples)
+        )
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise SupervisedTrainingError("Cannot validate the complete staging report.") from error
+    if not passed:
+        raise SupervisedTrainingError("Staging report is incomplete or belongs to another split.")
+    supplied_root = request.raw_root if samples[0].representation == "raw" else request.exe_root
+    if supplied_root is not None and supplied_root.expanduser().resolve() != root:
+        raise SupervisedTrainingError("Local input root differs from the staging report.")
+    return root
+
+
 def _evaluate(
     model: nn.Module,
     loader: DataLoader[tuple[Tensor, Tensor]],
@@ -394,6 +351,10 @@ def _git_revision() -> str | None:
         return None
 
 
+def _progress(message: str) -> None:
+    print(f"train: {message}", file=sys.stderr, flush=True)
+
+
 def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     """Run supervised training from private inputs and write immutable artifacts."""
     if request.track not in {"malconvgct", "hrrformer", "mamba"}:
@@ -410,7 +371,14 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     config = _load_mapping(request.config_path)
     if config.get("experiment", {}).get("kind") not in {"benchmark", "feasibility"}:
         raise SupervisedTrainingError("Experiment config kind must be benchmark or feasibility.")
-    examples = load_supervised_split(request.split_manifest_path)
+    representation = TRACK_REPRESENTATIONS[request.track]
+    examples = load_supervised_split(
+        request.split_manifest_path,
+        representation,
+        raw_samples_dir=request.raw_samples_dir,
+    )
+    staged_root = _staged_root(request, examples)
+    staging_report = request.staging_report if staged_root is not None else None
     train_rows = _partition(examples, "train")
     validation_rows = _partition(examples, "validation")
     test_rows = _partition(examples, "test")
@@ -428,25 +396,31 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                 "in the configured CUDA runtime before supervised training."
             )
 
-    tokenizer = None
-    if request.track != "malconvgct":
-        exe_root = request.exe_root
-        train_contents = ((exe_root / row.exe_relative_path).read_bytes() for row in train_rows)
-        tokenizer = train_exe_bpe_tokenizer(
-            train_contents, vocab_size=int(config["inputs"]["exe"]["tokenizer"]["vocab_size"])
+    _progress(
+        f"preparing track={request.track} device={device} "
+        f"train={len(train_rows)} validation={len(validation_rows)} test={len(test_rows)}"
+    )
+    source = _training_source(request, representation, staged_root)
+    if representation == "raw":
+        adapter: InputAdapter = RawInputAdapter(
+            int(config["inputs"]["raw"]["truncation"]["max_bytes"])
         )
-    model, max_length, use_attention_mask = _build_model(config, request.track, tokenizer)
+    else:
+        adapter = ExeInputAdapter(
+            max_tokens=int(config["inputs"]["exe"]["truncation"]["max_tokens"]),
+            vocab_size=int(config["inputs"]["exe"]["tokenizer"]["vocab_size"]),
+        )
+    if representation == "exe":
+        _progress("phase=fit-tokenizer")
+    adapter.fit(train_rows, source)
+    tokenizer = adapter.tokenizer
+    model, _, use_attention_mask = _build_model(config, request.track, tokenizer)
     model.to(device)
-    collate = collate_raw_byte_ids if request.track == "malconvgct" else collate_exe_tokens
     datasets = {
         split: _SupervisedDataset(
             rows,
-            request.track,
-            request.raw_root,
-            request.raw_samples_dir,
-            request.exe_root,
-            tokenizer,
-            max_length,
+            source,
+            adapter,
         )
         for split, rows in {
             "train": train_rows,
@@ -455,7 +429,9 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         }.items()
     }
     loaders = {
-        split: DataLoader(dataset, batch_size=1, shuffle=split == "train", collate_fn=collate)
+        split: DataLoader(
+            dataset, batch_size=1, shuffle=split == "train", collate_fn=adapter.collate
+        )
         for split, dataset in datasets.items()
     }
     training = _track_config(config, request.track)["training"]
@@ -490,9 +466,13 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     history: list[dict[str, Any]] = []
     optimizer.zero_grad()
     update = 0
-    for epoch in range(1, int(training["epochs"]) + 1):
+    epochs = int(training["epochs"])
+    train_batches = len(loaders["train"])
+    progress_every = max(1, math.ceil(train_batches / 10))
+    for epoch in range(1, epochs + 1):
         model.train()
         epoch_losses: list[float] = []
+        _progress(f"epoch={epoch}/{epochs} phase=train batches=0/{train_batches}")
         for batch_index, batch in enumerate(loaders["train"], start=1):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
@@ -523,6 +503,12 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                 scheduler.step()
                 optimizer.zero_grad()
                 update += 1
+            if batch_index % progress_every == 0 or batch_index == train_batches:
+                _progress(
+                    f"epoch={epoch}/{epochs} phase=train batches={batch_index}/{train_batches} "
+                    f"elapsed_seconds={time.perf_counter() - started:.1f}"
+                )
+        _progress(f"epoch={epoch}/{epochs} phase=validation")
         validation_loss, probabilities, labels = _evaluate(
             model, loaders["validation"], device, use_attention_mask
         )
@@ -545,8 +531,10 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
             best_auc = validation_auc
             best_threshold = threshold
             torch.save({"model": model.state_dict(), "epoch": epoch}, run_dir / "best.pt")
+        _progress(f"epoch={epoch}/{epochs} phase=complete validation_roc_auc={validation_auc:.4f}")
     checkpoint = torch.load(run_dir / "best.pt", map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["model"])
+    _progress("phase=test")
     test_loss, test_probabilities, test_labels = _evaluate(
         model, loaders["test"], device, use_attention_mask
     )
@@ -593,6 +581,7 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         "runtime_seconds": elapsed,
         "peak_memory_bytes": peak_memory,
         "failures": [],
+        "source": source.summary(),
     }
     (run_dir / "metrics.json").write_text(
         json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -600,9 +589,12 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     manifest = {
         "experiment_kind": config["experiment"]["kind"],
         "track": request.track,
+        "representation": representation,
+        "source_kind": "local",
         "run_id": request.run_id,
         "config_sha256": _sha256_file(request.config_path),
         "split_manifest_sha256": _sha256_file(request.split_manifest_path),
+        "staging_report_sha256": (_sha256_file(staging_report) if staging_report else None),
         "tokenizer_sha256": tokenizer_digest,
         "git_revision": _git_revision(),
         "platform": platform.platform(),
@@ -613,6 +605,7 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         "command": request.command,
         "gradient_accumulation_steps": request.gradient_accumulation_steps,
         "split_counts": dict(sorted(Counter(row.split for row in examples).items())),
+        "source": source.summary(),
         "artifacts": {
             "checkpoint": "best.pt",
             "metrics": "metrics.json",
@@ -623,4 +616,5 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     (run_dir / "run-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    _progress(f"phase=complete elapsed_seconds={elapsed:.1f}")
     return {"manifest": manifest, "metrics": metrics}

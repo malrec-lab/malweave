@@ -42,6 +42,7 @@ class RandsRawManifestPreset:
     summary: Path
     total: int | None
     balanced: bool
+    bucket_env: str
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -72,6 +73,7 @@ def load_rands_raw_manifest_preset(path: Path, preset: str) -> RandsRawManifestP
     config = _load_config(path)
     try:
         inputs = config["data"]["manifest_inputs"]
+        bucket_env = config["data"]["bucket_env"]
         selection = config["data"]["manifest_presets"][preset]
         values = {
             "inventory": inputs["inventory"],
@@ -81,6 +83,8 @@ def load_rands_raw_manifest_preset(path: Path, preset: str) -> RandsRawManifestP
         }
         if any(not isinstance(value, str) or not value for value in values.values()):
             raise ValueError("Preset paths must be nonempty strings.")
+        if not isinstance(bucket_env, str) or not bucket_env:
+            raise ValueError("Preset bucket environment variable must be nonempty.")
         total = selection.get("total")
         balanced = selection.get("balanced", False)
         if total is not None and (
@@ -103,6 +107,7 @@ def load_rands_raw_manifest_preset(path: Path, preset: str) -> RandsRawManifestP
         summary=resolve(values["summary"]),
         total=total,
         balanced=balanced,
+        bucket_env=bucket_env,
     )
 
 
