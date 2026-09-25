@@ -1,0 +1,64 @@
+"""Dataset-neutral, read-only S3 object listing primitives.
+
+Dataset modules decide how keys map to sample identities and labels. These helpers
+never inspect object content or create local files.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+class S3ListingError(ValueError):
+    """An S3 object-metadata request failed."""
+
+
+@dataclass(frozen=True)
+class S3Object:
+    key: str
+    size: int
+    etag: str
+    last_modified: str
+
+
+@dataclass(frozen=True)
+class S3Page:
+    objects: tuple[S3Object, ...]
+    next_token: str | None
+
+
+def make_s3_client() -> Any:
+    """Create an AWS-SDK client only when a command actually needs S3."""
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5}))
+
+
+def list_s3_page(
+    client: Any, bucket: str, prefix: str, *, continuation_token: str | None = None
+) -> S3Page:
+    """Read one page of object metadata without downloading object bytes."""
+    if not bucket or not prefix:
+        raise S3ListingError("A bucket and prefix are required.")
+    request: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 1000}
+    if continuation_token:
+        request["ContinuationToken"] = continuation_token
+    try:
+        response = client.list_objects_v2(**request)
+    except Exception as error:
+        raise S3ListingError("S3 listing failed; retry from the saved page token.") from error
+    next_token = response.get("NextContinuationToken")
+    if response.get("IsTruncated") and not next_token:
+        raise S3ListingError("S3 returned a truncated page without a continuation token.")
+    objects = tuple(
+        S3Object(
+            key=str(item["Key"]),
+            size=int(item["Size"]),
+            etag=str(item.get("ETag", "")),
+            last_modified=str(item.get("LastModified", "")),
+        )
+        for item in response.get("Contents", [])
+    )
+    return S3Page(objects=objects, next_token=str(next_token) if next_token else None)

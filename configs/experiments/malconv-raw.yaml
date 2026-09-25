@@ -1,0 +1,67 @@
+experiment:
+  name: rands-malconv-raw
+  dataset: rands
+  kind: feasibility
+  seed: 42
+
+references:
+  rands_snapshot: "2026-09-02"
+
+data:
+  bucket_env: MALWEAVE_RANDS_S3_BUCKET
+  raw_prefix: RanDS_PE_Dataset/dataset/
+  metadata_filters: {arch: I386, packed: false}
+  source_policy: {deduplicate_by: source_sha256, exclude_conflicting_labels: true, verify_sha256: true}
+  manifest_inputs:
+    inventory: data/processed/rands/raw-s3/raw-metadata-candidates.csv
+    inventory_summary: reports/rands/raw-s3/inventory.json
+  manifest_presets:
+    full:
+      manifest: data/processed/rands/raw-s3/raw-all-available-split.csv
+      summary: reports/rands/raw-s3/raw-all-available-split.json
+    pilot:
+      total: 1000
+      balanced: true
+      manifest: data/processed/rands/raw-s3/raw-pilot-1000.csv
+      summary: reports/rands/raw-s3/raw-pilot-1000.json
+  selection_method: sha256_rank_per_label_within_split
+  # Keep this frozen ranking salt so renaming the experiment does not change its selected samples.
+  selection_seed: rands-raw-experiment-v1
+  labels: {benign: 0, ransomware: 1}
+
+split:
+  group_key: source_sha256
+  method: temporal_by_year
+  time_field: Year
+  year_ranges: {train: {max: 2022}, validation: {min: 2023, max: 2023}, test: {min: 2024}}
+  fractions: {train: 0.70, validation: 0.15, test: 0.15}
+  on_class_shortfall: fail
+
+inputs:
+  raw:
+    truncation: {max_bytes: 1048576, side: right}
+    encoding: {byte_id_offset: 1, pad_token_id: 0, vocab_size: 257}
+
+runtime:
+  device: cuda:0
+  batch_size: 1
+  gradient_accumulation_steps: 64
+
+tracks:
+  malconvgct:
+    architecture:
+      vocab_size: 257
+      embedding_size: 8
+      channels: 256
+      stride: 64
+      kernel_size: 256
+      layers: 1
+      pad_token_id: 0
+      num_labels: 2
+      chunk_size: 65536
+      min_chunk_size: 1024
+    training:
+      epochs: 1
+      precision: fp32
+      optimizer: {learning_rate: 0.001, weight_decay: 0.01}
+      scheduler: {warmup_ratio: 0.05, max_grad_norm: 1.0}

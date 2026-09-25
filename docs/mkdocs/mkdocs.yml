@@ -27,6 +27,10 @@ nav:
       - LMLM on RanDS protocol: workflows/lmlm-rands-protocol.md
       - LMLM on RanDS architecture: workflows/lmlm-rands-architecture.md
       - Research workstreams: workflows/research-workstreams.md
+      - Experiments:
+          - MalConv RAW S3 training plan: workflows/experiments/malconv-raw-s3-training-plan.md
+          - MalConv RAW: workflows/experiments/malconv-raw.md
+          - S3 inventories and RAW manifests: workflows/experiments/s3-manifests.md
       - Distributed Ghidra extraction: workflows/distributed-ghidra.md
       - Distributed Ghidra quick start: workflows/distributed-ghidra-quickstart.md
   - Development:

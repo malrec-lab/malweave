@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -37,6 +38,8 @@ from malweave.data.rands_products import (
     load_exe_inputs,
     write_rands_product_outputs,
 )
+from malweave.data.s3.inventory import S3InventoryError, inventory_s3_prefix
+from malweave.data.s3.rands import RandsS3Error, inventory_rands_s3
 from malweave.experiments.rands_comparison import (
     RandsComparisonError,
     build_rands_comparison_cohort,
@@ -45,6 +48,11 @@ from malweave.experiments.rands_comparison import (
     split_rands_comparison_cohort,
     write_rands_comparison_split_outputs,
 )
+from malweave.experiments.rands_raw_manifest import (
+    RandsRawError,
+    freeze_rands_raw_manifest,
+    load_rands_raw_manifest_preset,
+)
 from malweave.training.supervised import (
     SupervisedRunRequest,
     SupervisedTrainingError,
@@ -52,6 +60,7 @@ from malweave.training.supervised import (
 )
 
 DEFAULT_RANDS_CONFIG = CONFIGS_DIR / "datasets" / "rands-raw-2026.yaml"
+DEFAULT_MALCONV_RAW_CONFIG = CONFIGS_DIR / "experiments" / "malconv-raw.yaml"
 DOTENV_PATH = PROJECT_ROOT / ".env"
 
 
@@ -67,6 +76,53 @@ def _parser() -> argparse.ArgumentParser:
     data_commands = data.add_subparsers(dest="data_command", required=True)
     experiment = commands.add_parser("experiment", help="Freeze and run declared experiments.")
     experiment_commands = experiment.add_subparsers(dest="experiment_command", required=True)
+
+    generic_inventory = data_commands.add_parser(
+        "inventory-s3", help="List any S3 prefix into a private, unlabeled object inventory."
+    )
+    generic_inventory.add_argument("--bucket-env", default="MALWEAVE_S3_BUCKET")
+    generic_inventory.add_argument("--prefix", required=True)
+    generic_inventory.add_argument("--state-db", type=Path, required=True)
+    generic_inventory.add_argument("--manifest", type=Path, required=True)
+    generic_inventory.add_argument("--summary", type=Path, required=True)
+    generic_inventory.add_argument("--suffix", default=None)
+    generic_inventory.add_argument("--min-size", type=int, default=0)
+    generic_inventory.add_argument("--max-size", type=int, default=None)
+    generic_inventory.add_argument("--resume", action="store_true")
+    generic_inventory.add_argument("--progress-every", type=int, default=25)
+
+    inventory = data_commands.add_parser(
+        "inventory-rands-s3",
+        help="Audit RanDS S3 objects and save RAW metadata candidates, including missing ones.",
+    )
+    inventory.add_argument("--config", type=Path, default=DEFAULT_RANDS_CONFIG)
+    inventory.add_argument("--metadata-root", type=Path, required=True)
+    inventory.add_argument("--bucket-env", default="MALWEAVE_RANDS_S3_BUCKET")
+    inventory.add_argument("--prefix", required=True)
+    inventory.add_argument("--protocol", default="lmlm_x86_unpacked")
+    inventory.add_argument("--state-db", type=Path, required=True)
+    inventory.add_argument("--manifest", type=Path, required=True)
+    inventory.add_argument("--summary", type=Path, required=True)
+    inventory.add_argument("--resume", action="store_true")
+    inventory.add_argument("--progress-every", type=int, default=25)
+
+    freeze_raw = experiment_commands.add_parser(
+        "freeze-rands-raw",
+        help="Freeze a RAW split from available S3 candidates (all by default).",
+    )
+    freeze_raw.add_argument("--experiment", type=Path, default=DEFAULT_MALCONV_RAW_CONFIG)
+    freeze_raw.add_argument("--preset", choices=("full", "pilot"), default=None)
+    freeze_raw.add_argument("--inventory", type=Path, default=None)
+    freeze_raw.add_argument("--inventory-summary", type=Path, default=None)
+    freeze_raw.add_argument("--manifest", type=Path, default=None)
+    freeze_raw.add_argument("--summary", type=Path, default=None)
+    freeze_raw.add_argument("--total", type=int, default=None)
+    freeze_raw.add_argument("--balanced", action="store_true")
+    freeze_raw.add_argument("--label-count", action="append", default=[], metavar="LABEL=N")
+    freeze_raw.add_argument("--where", action="append", default=[], metavar="COLUMN=VALUE")
+    freeze_raw.add_argument("--seed", default=None)
+    freeze_raw.add_argument("--min-year", type=int, default=None)
+    freeze_raw.add_argument("--max-year", type=int, default=None)
 
     inspect = data_commands.add_parser("inspect", help="Audit a local dataset without mutation.")
     inspect.add_argument("--dataset", choices=("rands",), required=True)
@@ -424,6 +480,97 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_project_environment()
 
     try:
+        if args.command == "data" and args.data_command == "inventory-s3":
+            bucket = os.environ.get(args.bucket_env)
+            if not bucket:
+                raise S3InventoryError(f"Set {args.bucket_env} to the private S3 bucket name.")
+            summary = inventory_s3_prefix(
+                bucket=bucket,
+                prefix=args.prefix,
+                state_path=args.state_db,
+                manifest_path=args.manifest,
+                summary_path=args.summary,
+                suffix=args.suffix,
+                min_size=args.min_size,
+                max_size=args.max_size,
+                resume=args.resume,
+                progress_every=args.progress_every,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "data" and args.data_command == "inventory-rands-s3":
+            bucket = os.environ.get(args.bucket_env)
+            if not bucket:
+                raise RandsS3Error(f"Set {args.bucket_env} to the private S3 bucket name.")
+            summary = inventory_rands_s3(
+                load_rands_dataset_config(args.config),
+                args.metadata_root,
+                bucket=bucket,
+                prefix=args.prefix,
+                protocol=args.protocol,
+                state_path=args.state_db,
+                manifest_path=args.manifest,
+                summary_path=args.summary,
+                resume=args.resume,
+                progress_every=args.progress_every,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "freeze-rands-raw":
+            custom_selection = (
+                args.total is not None
+                or args.balanced
+                or bool(args.label_count)
+                or bool(args.where)
+                or args.seed is not None
+                or args.min_year is not None
+                or args.max_year is not None
+            )
+            if args.preset is not None and custom_selection:
+                raise RandsRawError(
+                    "A named preset cannot be combined with selection overrides; "
+                    "omit --preset and provide new --manifest and --summary paths."
+                )
+            preset_name = args.preset or (
+                "custom" if custom_selection or args.manifest or args.summary else "full"
+            )
+            preset = load_rands_raw_manifest_preset(
+                args.experiment, "full" if preset_name == "custom" else preset_name
+            )
+            manifest_path = args.manifest or (preset.manifest if preset_name != "custom" else None)
+            summary_path = args.summary or (preset.summary if preset_name != "custom" else None)
+            if manifest_path is None or summary_path is None:
+                raise RandsRawError(
+                    "Custom selections require both --manifest and --summary output paths."
+                )
+            label_counts = {}
+            for item in args.label_count:
+                label, separator, count = item.partition("=")
+                if not separator or not count.isdigit() or label in label_counts:
+                    raise RandsRawError("--label-count must be unique LABEL=N values.")
+                label_counts[label] = int(count)
+            where = []
+            for item in args.where:
+                column, separator, value = item.partition("=")
+                if not separator or not column or not value:
+                    raise RandsRawError("--where must be COLUMN=VALUE.")
+                where.append((column, value))
+            summary = freeze_rands_raw_manifest(
+                args.inventory or preset.inventory,
+                args.inventory_summary or preset.inventory_summary,
+                args.experiment,
+                manifest_path,
+                summary_path,
+                total=preset.total if preset_name != "custom" else args.total,
+                balanced=preset.balanced if preset_name != "custom" else args.balanced,
+                label_counts=label_counts,
+                where=tuple(where),
+                seed=args.seed,
+                min_year=args.min_year,
+                max_year=args.max_year,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
         if args.command == "data" and args.data_command == "inspect":
             config = load_rands_dataset_config(args.config)
             locations = config.resolve_locations(args.root, args.metadata_root)
@@ -581,6 +728,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         RandsPeAssessmentError,
         RandsProductError,
         RandsComparisonError,
+        RandsRawError,
+        RandsS3Error,
+        S3InventoryError,
         SupervisedTrainingError,
         OSError,
     ) as error:
