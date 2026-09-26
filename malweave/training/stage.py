@@ -7,6 +7,10 @@ It never executes, previews, uploads, or modifies an S3 source object.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
+import errno
+import fcntl
 from hashlib import sha256
 import json
 import os
@@ -24,6 +28,33 @@ from malweave.training.sources import ByteSourceError, S3ByteSource, VerifiedByt
 
 class StageError(ValueError):
     """The selected representations were not completely staged and verified."""
+
+
+@contextmanager
+def _staging_lock(output_root: Path) -> Iterator[None]:
+    """Hold a process lock through writes and report publication; never unlink it.
+
+    A persistent sibling lock also protects an empty/new output root. The OS releases
+    ownership after interruption or process death; the file itself is not a stale lock.
+    """
+    validate_private_path(output_root)
+    root = output_root.expanduser().resolve()
+    root.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = root.with_name(root.name + ".staging.lock")
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno in {errno.EAGAIN, errno.EACCES}:
+                raise StageError(
+                    "Another staging process owns this output root. Do not run --resume "
+                    "alongside it; wait for it to exit or stop it first."
+                ) from error
+            raise StageError("Cannot acquire staging lock; refusing unlocked writes.") from error
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def _file_matches(path: Path, sample: TrainingSample) -> bool:
@@ -64,6 +95,31 @@ def _write_new_verified_file(path: Path, content: bytes) -> None:
 
 
 def stage_manifest_from_s3(
+    manifest_path: Path,
+    manifest_summary_path: Path,
+    output_root: Path,
+    *,
+    bucket: str,
+    representation: str = "raw",
+    resume: bool = False,
+    client: Any = None,
+    progress_every: int = 100,
+) -> dict[str, Any]:
+    """Stage under an exclusive output lock, including resume and report writes."""
+    with _staging_lock(output_root):
+        return _stage_manifest_from_s3(
+            manifest_path,
+            manifest_summary_path,
+            output_root,
+            bucket=bucket,
+            representation=representation,
+            resume=resume,
+            client=client,
+            progress_every=progress_every,
+        )
+
+
+def _stage_manifest_from_s3(
     manifest_path: Path,
     manifest_summary_path: Path,
     output_root: Path,
@@ -132,6 +188,9 @@ def stage_manifest_from_s3(
             with connection:
                 connection.executemany("INSERT INTO settings VALUES (?, ?)", settings.items())
         source = VerifiedByteSource(S3ByteSource(bucket, client))
+        verified_this_run = 0
+        failed_this_run = 0
+        reasons_this_run: Counter[str] = Counter()
         for index, (sample, target) in enumerate(zip(samples, destinations, strict=True), start=1):
             started = time.perf_counter()
             status = "success"
@@ -147,12 +206,31 @@ def stage_manifest_from_s3(
                     size = target.stat().st_size
                 else:
                     content = source.read(sample)
-                    _write_new_verified_file(target, content)
+                    try:
+                        _write_new_verified_file(target, content)
+                    except FileExistsError:
+                        # Defensive against older/external writers not using our lock.
+                        if not _file_matches(target, sample):
+                            raise ByteSourceError(
+                                "A conflicting destination appeared during staging.",
+                                code="local_conflict",
+                            ) from None
                     size = len(content)
             except ByteSourceError as error:
                 status, reason = "failed", error.code
-            except OSError:
-                status, reason = "failed", "write_error"
+            except OSError as error:
+                status = "failed"
+                reason = "write_error:" + errno.errorcode.get(error.errno, "UNKNOWN")
+            if status == "success":
+                verified_this_run += 1
+            else:
+                failed_this_run += 1
+                reasons_this_run[reason] += 1
+                if reasons_this_run[reason] == 1:
+                    print(
+                        f"staging failure: reason={reason} (details recorded in SQLite)",
+                        file=sys.stderr,
+                    )
             prior = connection.execute(
                 "SELECT runtime_seconds FROM outcomes WHERE source_sha256 = ?",
                 (sample.source_sha256,),
@@ -173,11 +251,10 @@ def stage_manifest_from_s3(
                     ),
                 )
             if index % progress_every == 0 or index == len(samples):
-                completed = connection.execute(
-                    "SELECT COUNT(*) FROM outcomes WHERE status = 'success'"
-                ).fetchone()[0]
                 print(
-                    f"staging: checked={index} verified={completed} selected={len(samples)}",
+                    f"staging: checked={index} verified={verified_this_run} "
+                    f"failed={failed_this_run} selected={len(samples)} "
+                    f"failure_reasons={dict(reasons_this_run)}",
                     file=sys.stderr,
                 )
         outcomes = list(

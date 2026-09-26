@@ -102,6 +102,15 @@ uv run malweave experiment stage-inputs --preset pilot
 uv run malweave experiment stage-inputs --preset pilot --resume
 ```
 
+Run only one staging process per output root. An OS lock rejects concurrent writers,
+including a second `--resume`, before any download or SQLite update. The sibling
+`<output-root>.staging.lock` file stays on disk; its presence does not mean a process is
+running. Do not delete it: ownership is released automatically when the process exits.
+Progress `checked`, `verified`, and `failed` all refer to the current pass; on resume,
+existing files are reverified and old failure states are repaired without redownloading
+valid content. Filesystem failures retain symbolic errno values such as
+`write_error:ENOSPC`, `write_error:EDQUOT`, or `write_error:EIO` in SQLite and reports.
+
 On the same isolated worker, train against the exact frozen split and staging report. The sole
 track, device, seed, and accumulation setting come from `malconv-raw.yaml`; the run directory
 must be new. The trainer prints aggregate batch progress and evaluation phases to stderr while it
