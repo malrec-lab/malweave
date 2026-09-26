@@ -4,7 +4,8 @@ The code has three layers under `malweave/data/s3/`:
 
 | Layer | Responsibility | Reuse |
 | --- | --- | --- |
-| `client.py`, `inventory.py` | List object metadata under **any** S3 prefix; save a resumable SQLite scan and optional size/suffix-filtered, **unlabeled** inventory. Never read object bytes. | Reuse unchanged for another S3 folder. |
+| `client.py`, `inventory.py` | Generic listing, bounded explicit object reads with provenance, and resumable **unlabeled** inventories. Inventory listing never reads sample bytes. | Reuse unchanged for another S3 folder. |
+| `rands_metadata.py` | Fetch only the named RanDS CSVs; schema-validate and cache an immutable metadata snapshot. | Used by RanDS S3 inventory; no PE downloads. |
 | `rands.py` | Join the RanDS metadata snapshot to S3 objects, validate its key layout and expected release counts, and report availability by class. Its candidate CSV deliberately includes missing objects. | Replace this adapter for another dataset. |
 | `manifest.py` | Filter labeled rows and select full, balanced, proportional-total, or explicit class-count cohorts deterministically within existing splits. | Reuse unchanged from another dataset adapter. |
 
@@ -17,19 +18,35 @@ An S3 key name is not a trustworthy label. Keep private inventories and manifest
 ## RanDS example
 
 Set `MALWEAVE_RANDS_S3_BUCKET` in your local environment. The bucket value, credentials, source
-identities, and generated manifests must not be committed. The metadata CSVs must be the audited
-snapshot corresponding to the S3 prefix. The commands list metadata only; no PE bytes are fetched.
+identities, and generated manifests must not be committed. Configure AWS read credentials through
+the standard provider chain or a private `.env`; prefer temporary credentials scoped to the two
+metadata CSVs and selected dataset prefix. Listing requires `s3:ListBucket`, downloads require
+`s3:GetObject` (and `s3:GetObjectVersion` for versioned metadata); SSE-KMS objects may additionally
+require KMS decryption access. Never reuse credentials exposed in chat or logs.
+
+On a new worker, the CLI reads defaults from `configs/experiments/malconv-raw.yaml`:
 
 ```sh
-uv run malweave data inventory-rands-s3 \
-  --metadata-root /private/path/to/rands-metadata \
-  --prefix RanDS_PE_Dataset/dataset/ \
-  --state-db data/processed/rands/raw-s3/inventory.sqlite \
-  --manifest data/processed/rands/raw-s3/raw-metadata-candidates.csv \
-  --summary reports/rands/raw-s3/inventory.json
+uv run --locked malweave data inventory-rands-s3
 ```
 
-After an interrupted scan, rerun with the **same arguments** plus `--resume`. Each completed page
+It fetches `RanDS_PE_Dataset/Benign.csv` and `RanDS_PE_Dataset/Ransomware.csv`, validates them
+using the release-aware RanDS loader, and publishes the complete pair under
+`data/processed/rands/raw-s3/metadata/`. A private `provenance.json` records source keys,
+ETags/version IDs, sizes, and SHA-256 digests. Downloads are HEAD-pinned, bounded to 128 MiB per
+CSV, and never fetch PE samples. Subsequent runs verify and reuse this frozen cache without
+silently refreshing it. A partial download is discarded; a changed cache or source is rejected.
+To use a different snapshot, choose fresh cache, state, manifest, and report paths.
+
+`data.inventory` declares the metadata prefix/cache, scan state, and filter protocol;
+`data.raw_prefix` and `data.manifest_inputs` declare the sample prefix and inventory outputs.
+Use `--experiment` to select another YAML. Existing options still override YAML defaults.
+Use `--metadata-root /private/path/to/csvs` to bypass downloads with an existing local pair;
+do not combine it with `--metadata-prefix` or `--metadata-cache`.
+
+After an interrupted scan with an existing SQLite state, rerun with the **same arguments** plus
+`--resume`. If interrupted during metadata download before the state exists, rerun without it.
+Each completed page
 and its continuation token are committed together. The RanDS adapter writes the private manifest
 only after the expected release counts and class availability pass its aggregate audit. It checks
 S3 keys and sizes against metadata, not PE content hashes or PE parseability. S3 version IDs are
@@ -56,8 +73,9 @@ has been checked by these commands.
 
 The paths are project-relative in `configs/experiments/malconv-raw.yaml` and can be overridden
 with `--inventory`, `--inventory-summary`, `--manifest`, or `--summary`. Existing outputs are
-never overwritten. The two commands above have already been run for the current snapshot; use
-fresh output paths if you want another manifest.
+never overwritten. Private artifacts on one machine are not transferred by Git clone. Create
+them with these commands on a new worker, or transfer the matching audited artifacts privately.
+Use fresh output paths if you want another manifest.
 
 For a custom cohort, omit `--preset`, give new `--manifest` and `--summary` paths, then use
 `--total N`, `--balanced`, repeatable `--label-count LABEL=N`, repeatable

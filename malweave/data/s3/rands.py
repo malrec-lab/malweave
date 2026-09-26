@@ -213,6 +213,7 @@ def inventory_rands_s3(
         },
         "eligible_by_label_and_status": {k: dict(v) for k, v in eligible_status.items()},
         "metadata_duplicate_rows": metadata.duplicate_rows,
+        "metadata_sha256": settings["metadata_sha256"],
         "listing_pages": pages,
         "scan_seconds": round(scan_seconds, 3) if scan_seconds else None,
     }

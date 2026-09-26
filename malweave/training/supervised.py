@@ -296,6 +296,11 @@ def _staged_root(request: SupervisedRunRequest, samples: list[TrainingSample]) -
         raise SupervisedTrainingError(
             "S3-origin manifests require --staging-report before training."
         )
+    if not request.staging_report.is_file():
+        raise SupervisedTrainingError(
+            "Missing staging report. Run 'malweave experiment stage-inputs' with "
+            "the same experiment and preset before training."
+        )
     try:
         report = json.loads(request.staging_report.read_text(encoding="utf-8"))
         root = Path(report["output_root"]).expanduser().resolve()

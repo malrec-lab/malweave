@@ -40,8 +40,10 @@ from malweave.data.rands_products import (
     load_exe_inputs,
     write_rands_product_outputs,
 )
-from malweave.data.s3.inventory import S3InventoryError, inventory_s3_prefix
+from malweave.data.s3.client import S3ReadError
+from malweave.data.s3.inventory import S3InventoryError, inventory_s3_prefix, validate_private_path
 from malweave.data.s3.rands import RandsS3Error, inventory_rands_s3
+from malweave.data.s3.rands_metadata import prepare_rands_metadata
 from malweave.experiments.rands_comparison import (
     RandsComparisonError,
     build_rands_comparison_cohort,
@@ -201,13 +203,20 @@ def _parser() -> argparse.ArgumentParser:
         help="Audit RanDS S3 objects and save RAW metadata candidates, including missing ones.",
     )
     inventory.add_argument("--config", type=Path, default=DEFAULT_RANDS_CONFIG)
-    inventory.add_argument("--metadata-root", type=Path, required=True)
-    inventory.add_argument("--bucket-env", default="MALWEAVE_RANDS_S3_BUCKET")
-    inventory.add_argument("--prefix", required=True)
-    inventory.add_argument("--protocol", default="lmlm_x86_unpacked")
-    inventory.add_argument("--state-db", type=Path, required=True)
-    inventory.add_argument("--manifest", type=Path, required=True)
-    inventory.add_argument("--summary", type=Path, required=True)
+    inventory.add_argument("--experiment", type=Path, default=DEFAULT_MALCONV_RAW_CONFIG)
+    inventory.add_argument(
+        "--metadata-root", type=Path, help="Use existing local CSVs; skip download."
+    )
+    inventory.add_argument(
+        "--metadata-prefix", help="S3 prefix containing only the named CSV inputs."
+    )
+    inventory.add_argument("--metadata-cache", type=Path, help="Private frozen metadata cache.")
+    inventory.add_argument("--bucket-env")
+    inventory.add_argument("--prefix")
+    inventory.add_argument("--protocol")
+    inventory.add_argument("--state-db", type=Path)
+    inventory.add_argument("--manifest", type=Path)
+    inventory.add_argument("--summary", type=Path)
     inventory.add_argument("--resume", action="store_true")
     inventory.add_argument("--progress-every", type=int, default=25)
 
@@ -626,18 +635,75 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
         if args.command == "data" and args.data_command == "inventory-rands-s3":
-            bucket = os.environ.get(args.bucket_env)
+            settings = _experiment_settings(args.experiment)
+            data = settings.get("data", {})
+            if not isinstance(data, dict):
+                raise RandsS3Error("Inventory data config must be a mapping.")
+            options = data.get("inventory", {})
+            inputs = data.get("manifest_inputs", {})
+            if not all(isinstance(value, dict) for value in (data, options, inputs)):
+                raise RandsS3Error("Inventory config must contain mappings.")
+
+            def setting_path(override: Path | None, value: str | None) -> Path:
+                if override is not None:
+                    return override
+                if not isinstance(value, str) or not value:
+                    raise RandsS3Error("Missing inventory path in YAML; supply the CLI override.")
+                path = Path(value)
+                return path if path.is_absolute() else PROJECT_ROOT / path
+
+            bucket_env = args.bucket_env or data.get("bucket_env")
+            if not isinstance(bucket_env, str) or not bucket_env:
+                raise RandsS3Error("Declare data.bucket_env or --bucket-env.")
+            bucket = os.environ.get(bucket_env)
             if not bucket:
-                raise RandsS3Error(f"Set {args.bucket_env} to the private S3 bucket name.")
+                raise RandsS3Error(f"Set {bucket_env} to the private S3 bucket name.")
+            state = setting_path(args.state_db, options.get("state_db"))
+            manifest = setting_path(args.manifest, inputs.get("inventory"))
+            summary_file = setting_path(args.summary, inputs.get("inventory_summary"))
+            validate_private_path(state)
+            validate_private_path(manifest)
+            validate_private_path(summary_file, summary=True)
+            if manifest.exists():
+                raise RandsS3Error(
+                    "Inventory already exists; run experiment freeze-rands-raw next."
+                )
+            if state.exists() != args.resume:
+                raise RandsS3Error("Existing scan needs --resume; new scan must omit --resume.")
+            config = load_rands_dataset_config(args.config)
+            prefix = args.prefix or data.get("raw_prefix", "")
+            protocol = args.protocol or options.get("protocol", "lmlm_x86_unpacked")
+            if not isinstance(prefix, str) or not prefix or not prefix.endswith("/"):
+                raise RandsS3Error("Declare a slash-terminated data.raw_prefix or --prefix.")
+            if not isinstance(protocol, str) or protocol not in config.protocols:
+                raise RandsS3Error("Unknown inventory protocol.")
+            if args.metadata_root is not None:
+                if args.metadata_prefix or args.metadata_cache:
+                    raise RandsS3Error(
+                        "Choose local --metadata-root or S3 metadata options, not both."
+                    )
+                metadata_root = args.metadata_root
+            else:
+                metadata_prefix = args.metadata_prefix or options.get("metadata_prefix")
+                if not isinstance(metadata_prefix, str):
+                    raise RandsS3Error(
+                        "Declare data.inventory.metadata_prefix or --metadata-prefix."
+                    )
+                metadata_root = prepare_rands_metadata(
+                    config,
+                    setting_path(args.metadata_cache, options.get("metadata_cache")),
+                    bucket=bucket,
+                    prefix=metadata_prefix,
+                )
             summary = inventory_rands_s3(
-                load_rands_dataset_config(args.config),
-                args.metadata_root,
+                config,
+                metadata_root,
                 bucket=bucket,
-                prefix=args.prefix,
-                protocol=args.protocol,
-                state_path=args.state_db,
-                manifest_path=args.manifest,
-                summary_path=args.summary,
+                prefix=prefix,
+                protocol=protocol,
+                state_path=state,
+                manifest_path=manifest,
+                summary_path=summary_file,
                 resume=args.resume,
                 progress_every=args.progress_every,
             )
@@ -864,10 +930,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(result["metrics"], indent=2, sort_keys=True))
             return 0
     except KeyboardInterrupt:
-        print(
-            "interrupted: durable state was preserved; rerun the same command with --resume.",
-            file=sys.stderr,
-        )
+        if hasattr(args, "resume"):
+            message = (
+                "interrupted: if a state DB exists, rerun with --resume; "
+                "otherwise rerun without --resume."
+            )
+        else:
+            message = "interrupted: this command has no --resume option; inspect its outputs."
+        print(message, file=sys.stderr)
         return 130
     except (
         DatasetConfigError,
@@ -880,6 +950,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RandsRawError,
         RandsS3Error,
         S3InventoryError,
+        S3ReadError,
         SupervisedTrainingError,
         TrainingManifestError,
         ByteSourceError,

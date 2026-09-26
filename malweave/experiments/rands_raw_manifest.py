@@ -139,6 +139,11 @@ def freeze_rands_raw_manifest(
     validate_private_path(summary_path, summary=True)
     if manifest_path.exists() or summary_path.exists():
         raise RandsRawError("Output exists; use new paths to avoid changing a frozen split.")
+    if not inventory_path.is_file() or not inventory_summary_path.is_file():
+        raise RandsRawError(
+            "Missing inventory CSV or audit report. Run 'malweave data inventory-rands-s3' "
+            "with the same --experiment first; then rerun freeze-rands-raw."
+        )
     config = _load_config(config_path)
     payload = inventory_path.read_bytes()
     inventory_digest = sha256(payload).hexdigest()

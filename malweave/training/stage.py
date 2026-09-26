@@ -78,6 +78,11 @@ def stage_manifest_from_s3(
     validate_private_path(output_root)
     if progress_every < 1 or not bucket:
         raise StageError("A bucket and positive progress interval are required.")
+    if not manifest_path.is_file() or not manifest_summary_path.is_file():
+        raise StageError(
+            "Missing frozen manifest or audit report. For RanDS RAW, run "
+            "'malweave experiment freeze-rands-raw --preset full' (or pilot) first."
+        )
     manifest_digest = sha256(manifest_path.read_bytes()).hexdigest()
     try:
         audit = json.loads(manifest_summary_path.read_text(encoding="utf-8"))

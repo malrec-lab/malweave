@@ -10,6 +10,11 @@ references:
 data:
   bucket_env: MALWEAVE_RANDS_S3_BUCKET
   raw_prefix: RanDS_PE_Dataset/dataset/
+  inventory:
+    metadata_prefix: RanDS_PE_Dataset/
+    metadata_cache: data/processed/rands/raw-s3/metadata
+    state_db: data/processed/rands/raw-s3/inventory.sqlite
+    protocol: lmlm_x86_unpacked
   metadata_filters: {arch: I386, packed: false}
   source_policy: {deduplicate_by: source_sha256, exclude_conflicting_labels: true, verify_sha256: true}
   manifest_inputs:

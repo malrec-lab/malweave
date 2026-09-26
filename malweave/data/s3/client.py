@@ -1,17 +1,62 @@
 """Dataset-neutral, read-only S3 object listing primitives.
 
 Dataset modules decide how keys map to sample identities and labels. These helpers
-never inspect object content or create local files.
+do not create local files. Content reads require an explicit key and size bound.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any
 
 
 class S3ListingError(ValueError):
     """An S3 object-metadata request failed."""
+
+
+class S3ReadError(ValueError):
+    """An explicit, bounded S3 object read failed."""
+
+
+def read_s3_object(
+    client: Any, bucket: str, key: str, *, max_bytes: int
+) -> tuple[bytes, dict[str, Any]]:
+    """Read a bounded object, pinned to its HEAD identity, with content provenance."""
+    if not bucket or not key or max_bytes < 1:
+        raise S3ReadError("A bucket, key, and positive content limit are required.")
+    try:
+        head = client.head_object(Bucket=bucket, Key=key)
+        size = int(head["ContentLength"])
+        if not 0 < size <= max_bytes:
+            raise ValueError("Object exceeds the allowed size or is empty.")
+        request = {"Bucket": bucket, "Key": key, "IfMatch": head["ETag"]}
+        if head.get("VersionId"):
+            request["VersionId"] = head["VersionId"]
+        response = client.get_object(**request)
+        body = response["Body"]
+        try:
+            content = body.read(size + 1)
+        finally:
+            body.close()
+        if (
+            len(content) != size
+            or response.get("ETag") != head["ETag"]
+            or (head.get("VersionId") and response.get("VersionId") != head["VersionId"])
+        ):
+            raise ValueError("Downloaded object size or identity differs from HEAD.")
+        return content, {
+            "key": key,
+            "size": size,
+            "etag": head["ETag"],
+            "version_id": response.get("VersionId"),
+            "sha256": sha256(content).hexdigest(),
+        }
+    except Exception as error:
+        raise S3ReadError(
+            "S3 metadata download failed; check read permission, metadata prefix, "
+            "object size, and source stability. No completed cache was published."
+        ) from error
 
 
 @dataclass(frozen=True)
