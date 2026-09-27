@@ -17,7 +17,9 @@ leakage, and reporting rules that code should not silently choose.
   and unpacked). Count exclusions by class and reason. These fields do not reproduce the paper's
   independent `file`/`diec` checks; report that methodological difference.
 - Partition the remaining sources by metadata `Year` first: train through 2022, validation in
-  2023, and test from 2024 onward. The manifest CLI keeps all eligible sources by default; a
+  2023, and test from 2024 onward. The default `full` preset deterministically selects the
+  largest equal benign/ransomware count in **train only** (50/50, no fixed total).
+  Validation and test retain every eligible available row at their original class ratios; a
   bounded balanced 1,000-sample pilot is selected deterministically by SHA-256 within each class
   and partition (targets: train 350+350, validation 75+75, test 75+75).
   Do not backfill a short partition using another year range; fail and report the shortage instead.

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 import csv
-from dataclasses import dataclass
 from hashlib import sha256
 import json
 import math
@@ -42,31 +41,11 @@ from malweave.training.manifest import (
     TrainingSample,
     load_training_manifest,
 )
+from malweave.training.request import SupervisedRunRequest, SupervisedTrainingError
 from malweave.training.sources import (
     LocalByteSource,
     VerifiedByteSource,
 )
-
-
-class SupervisedTrainingError(ValueError):
-    """Raised when a supervised run would violate its declared contract."""
-
-
-@dataclass(frozen=True)
-class SupervisedRunRequest:
-    track: str
-    config_path: Path
-    split_manifest_path: Path
-    raw_root: Path | None
-    exe_root: Path | None
-    artifact_root: Path
-    run_id: str
-    device: str
-    gradient_accumulation_steps: int
-    seed: int
-    command: str | None = None
-    raw_samples_dir: str = "dataset"
-    staging_report: Path | None = None
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:

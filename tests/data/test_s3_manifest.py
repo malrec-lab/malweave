@@ -107,6 +107,37 @@ def test_manifest_options_are_deterministic_and_full_by_default() -> None:
     assert sum(row["label"] == "ransomware" for row in explicit) == 4
 
 
+def test_balance_train_preserves_every_evaluation_row_and_is_deterministic():
+    original, _ = _select(ManifestOptions())
+    selected, summary = _select(ManifestOptions(balance_splits=("train",)))
+    assert selected == _select(ManifestOptions(balance_splits=("train",)))[0]
+    assert [r for r in selected if r["split"] == "test"] == [
+        r for r in original if r["split"] == "test"
+    ]
+    assert summary["selected_by_split_and_label"]["train"] == {"benign": 4, "ransomware": 4}
+    assert (
+        summary["selected_by_split_and_label"]["test"]
+        == summary["available_by_split_and_label"]["test"]
+    )
+    assert len(selected) == 18
+    assert summary["balance_splits"] == ["train"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ManifestOptions(balance_splits=("missing",)),
+        ManifestOptions(balance_splits=("train", "train")),
+        ManifestOptions(balance_splits=("train",), balanced=True),
+        ManifestOptions(balance_splits=("train",), total=8),
+        ManifestOptions(balance_splits=("train",), label_counts={"benign": 4}),
+    ],
+)
+def test_split_balancing_rejects_ambiguous_options(options):
+    with pytest.raises(ManifestSelectionError):
+        _select(options)
+
+
 def test_manifest_rejects_shortfall_and_ambiguous_options() -> None:
     with pytest.raises(ManifestSelectionError, match="divide evenly"):
         _select(ManifestOptions(total=7, balanced=True))

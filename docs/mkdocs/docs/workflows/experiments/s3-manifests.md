@@ -54,8 +54,9 @@ not frozen by this listing; training must verify downloaded bytes and use immuta
 source objects in an isolated environment.
 
 The MalConv RAW YAML supplies the inventory path, audit-report path, output paths, and two named
-presets. The default keeps **all available** `I386`, `Packed=0` rows within the declared year
-ranges. `--preset pilot` creates an optional balanced 1,000-sample cohort; split allocations are
+presets. The default `full` balances **train only**, selecting equal class counts from
+available `I386`, `Packed=0` training rows. Validation and test retain all eligible available
+rows without balancing. No fixed total is imposed. `--preset pilot` creates an optional balanced 1,000-sample cohort; split allocations are
 70/15/15 *within each class*, so each split remains class-balanced. These are separate frozen
 manifests:
 
@@ -66,9 +67,12 @@ uv run malweave experiment freeze-rands-raw --preset pilot
 
 `raw-metadata-candidates.csv` has every metadata-eligible `I386`, `Packed=0` source, including
 those with `availability=missing` or `size_mismatch`; it is an audit input, **not** a training
-manifest. The default writes every **available** candidate to
-`raw-all-available-split.csv` (with a corresponding JSON report). The word "all" refers only to
-the metadata-eligible, S3-available cohort, not the entire RanDS release. No file-content hash
+manifest. The default writes the balanced cohort to
+`raw-train-balanced-full-split.csv` (with a corresponding JSON report). The previous all-split
+balanced `raw-balanced-full-split.csv` is superseded; do not use it for this experiment.
+The previous unbalanced
+`raw-all-available-split.csv` remains an immutable historical artifact; it is no longer the
+default full experiment. No file-content hash
 has been checked by these commands.
 
 The paths are project-relative in `configs/experiments/malconv-raw.yaml` and can be overridden
@@ -83,6 +87,11 @@ For a custom cohort, omit `--preset`, give new `--manifest` and `--summary` path
 `--total` keeps the largest equal class count in each split; `--total N` alone allocates by the
 eligible class proportions. `--label-count` cannot combine with `--total` or `--balanced`.
 Selections fail on a split/class shortfall; they do not borrow rows across time boundaries.
+
+Use `balance_splits: [train]` in a preset, or repeatable `--balance-split train` for a custom
+cohort, to balance only named splits. Other splits retain all eligible rows. This option
+cannot combine with `balanced`, `total`, or explicit label counts. The summary records
+the balancing scope and available/selected counts per split and class.
 
 ## Stage selected bytes before training
 
@@ -111,6 +120,44 @@ existing files are reverified and old failure states are repaired without redown
 valid content. Filesystem failures retain symbolic errno values such as
 `write_error:ENOSPC`, `write_error:EDQUOT`, or `write_error:EIO` in SQLite and reports.
 
+The train-balanced `full` preset declares `staging_name: full-train-balanced` and a `reuse_root` pointing
+to the previous `work/staged/rands-malconv-raw/full` cache. Its first staging invocation omits
+`--resume`; later invocations use it. New manifests always get their own state and report.
+The trainer resolves the new staging report from the same preset. The original full manifest,
+SQLite state, report, and bytes are not overwritten.
+
+Generic `--reuse-root PATH` overrides the preset cache. Selected cached bytes must match their
+declared size and SHA-256 before they are hardlinked into the new output root. Missing cached
+files are downloaded; conflicting cached files fail explicitly without modifying the cache.
+Hardlinks require the same filesystem (otherwise `write_error:EXDEV`); they share disk bytes
+and must remain immutable. Cache and output roots must be separate, non-nested directories.
+No sample is copied or moved between temporal partitions. Full balancing is deterministic
+undersampling, not oversampling or a forced 70/15/15 temporal split.
+
+Use `--workers N` (1 through 32, default 1) for bounded concurrent downloads within that
+**single process**. For example, after the old staging process has exited:
+
+```sh
+uv run --locked malweave experiment stage-inputs --preset full --resume --workers 4
+```
+
+Worker count can change on resume without changing the frozen cohort. Each worker streams
+1 MiB chunks to a temporary file, verifies the full size and digest, and only then publishes
+the file. SQLite remains single-writer with one durable transaction per recorded outcome.
+Already valid local files are rehashed and reused. Staging does not require a GPU.
+
+Progress includes reused files, files/second, downloaded MiB/second, and an approximate ETA.
+ETA can change sharply when resume moves from local verification to new downloads. Compare
+worker counts on comparable workloads; more workers are not guaranteed to help when disk,
+SQLite, or bandwidth is already saturated. No real-corpus speedup is assumed.
+
+Reports include wall time and timing sums for source reads/hashing, workers, and SQLite.
+Worker timing sums overlap and must not be interpreted as elapsed wall time. Transfer-byte
+accounting covers recorded outcomes only, not network overhead, SDK retries, or unrecorded
+in-flight work when stopped early. Storage errors `ENOSPC`, `EDQUOT`, `EACCES`, and `EROFS`
+stop scheduling early; fix storage before resuming. Cancellation drains running workers before
+releasing the lock; a published file without a committed outcome is reverified on resume.
+
 On the same isolated worker, train against the exact frozen split and staging report. The sole
 track, device, seed, and accumulation setting come from `malconv-raw.yaml`; the run directory
 must be new. The trainer prints aggregate batch progress and evaluation phases to stderr while it
@@ -138,3 +185,74 @@ the full eligible cohort need not discard majority-class data solely to force 50
 both a balanced comparison set and, where the intended deployment distribution is known, a
 prevalence-aware set. RanDS benign-versus-ransomware labels do not measure general malware
 detection performance.
+
+## Stage directly into a Runpod Network Volume
+
+`stage-network` is an explicitly authorized private transfer, separate from the read-only
+dataset preparation workflow. Run it only on an isolated transfer worker: sample bytes pass
+through that worker's RAM even though no sample file is written to its disk. Do not run it on
+a personal workstation. It does not create Pods, volumes, or GPU resources. Source AWS
+credentials need read access; separate Runpod credentials need destination read, write, and
+multipart-abort access. This is a relay, not a server-side cross-provider copy.
+
+Configure `MALWEAVE_RANDS_S3_BUCKET` and the normal AWS credential provider chain for the source.
+For the destination, set `RUNPOD_S3_BUCKET`, `RUNPOD_S3_ENDPOINT_URL`, `RUNPOD_S3_REGION`,
+`RUNPOD_S3_ACCESS_KEY_ID`, and `RUNPOD_S3_SECRET_ACCESS_KEY` privately. Runpod keys never replace
+the source SDK credentials. See the [Runpod S3 API documentation](https://docs.runpod.io/storage/s3-api)
+for endpoint selection, multipart support, and quota restrictions.
+
+Once the selected frozen manifest and passing source audit exist on the transfer worker:
+
+```sh
+uv run --locked --no-default-groups --inexact malweave experiment stage-network --preset full --workers 4 --acknowledge-isolated-worker
+```
+
+The data CLI does not import PyTorch, tokenizers, or model code. `--no-default-groups` avoids
+installing the training/dev groups; `--inexact` preserves any already-installed packages.
+After an interruption with an existing state DB, use the same command plus `--resume`.
+Workers may change, but manifest/audit digests, source/destination identity, prefix, region,
+representation and mount path must not change. Private SQLite records one durable outcome
+per completed source; failed samples remain explicit in aggregate class coverage reports.
+
+By default the train-balanced full data lands at
+`malweave/work/staged/rands-malconv-raw/full-train-balanced/` inside the volume. Override the path
+with `--destination-prefix`; override private local state using `--state-root`. Custom cohorts
+require both of those plus `--manifest` and `--manifest-summary`. RAW and EXE manifests are
+supported via `--representation`. This command does not rebalance or resplit data.
+
+Source reads are ETag/version-pinned and SHA-256/size-checked. Small objects use bounded
+buffering; larger objects stream multipart parts of 8 MiB. Objects are published only after
+source verification, then fully downloaded from the destination for hash verification.
+This readback adds network traffic/time. Resume rechecks destination bytes and avoids reading
+the source again for valid completed objects. Conflicting destination bytes fail without
+overwriting them. Sample bytes never enter local state or logs.
+
+Use **one writer per destination prefix**, across all machines. The local lock prevents two
+processes sharing a state root; the remote contract detects different manifests, but neither
+is an atomic distributed lock. Do not modify volume files from a mounted Pod during staging.
+Multipart IDs are journaled and aborted on failure/resume. A hard kill immediately after
+multipart creation but before journal persistence can leave orphaned parts; inspect them
+before deleting state. Never delete another job's uploads or rerun into a shared prefix.
+
+After every selected object passes, the command publishes `split-manifest.csv`,
+`manifest-summary.json`, and finally `staging-summary.json` under that same prefix. Local
+`network-staging-summary.json` additionally records timing, class failures, reused files,
+successful uploaded payload bytes (excluding retries/failed transfers/readback traffic),
+and `publication_complete`. No code, credentials, checkpoints, or old unbalanced corpus
+are automatically uploaded.
+
+Attach the volume to a GPU Pod at creation. At the default `/workspace` mount, use the
+exported manifest and staging report rather than a newly generated manifest:
+
+```sh
+uv run --locked malweave experiment train \
+  --experiment configs/experiments/malconv-raw.yaml \
+  --split-manifest /workspace/malweave/work/staged/rands-malconv-raw/full-train-balanced/split-manifest.csv \
+  --staging-report /workspace/malweave/work/staged/rands-malconv-raw/full-train-balanced/staging-summary.json \
+  --run-id malconv-raw-balanced-001
+```
+
+Install the matching code/config separately on that Pod. If mounting elsewhere, declare
+`--mount-root` before transfer so the staging report points at the correct filesystem root.
+The remote report is immutable evidence of a completed verification, not protection against
+later edits on a writable volume; keep outputs immutable and retain training-time byte checks.

@@ -44,6 +44,7 @@ from malweave.data.s3.client import S3ReadError
 from malweave.data.s3.inventory import S3InventoryError, inventory_s3_prefix, validate_private_path
 from malweave.data.s3.rands import RandsS3Error, inventory_rands_s3
 from malweave.data.s3.rands_metadata import prepare_rands_metadata
+from malweave.data.s3.relay import RelayError
 from malweave.experiments.rands_comparison import (
     RandsComparisonError,
     build_rands_comparison_cohort,
@@ -62,13 +63,13 @@ from malweave.experiments.rands_raw_manifest import (
     load_rands_raw_manifest_preset,
 )
 from malweave.training.manifest import TrainingManifestError
-from malweave.training.sources import ByteSourceError
-from malweave.training.stage import StageError, stage_manifest_from_s3
-from malweave.training.supervised import (
+from malweave.training.request import (
     SupervisedRunRequest,
     SupervisedTrainingError,
-    run_supervised_training,
 )
+from malweave.training.sources import ByteSourceError
+from malweave.training.stage import StageError, stage_manifest_from_s3
+from malweave.training.stage_network import stage_network
 
 DEFAULT_RANDS_CONFIG = CONFIGS_DIR / "datasets" / "rands-raw-2026.yaml"
 DEFAULT_MALCONV_RAW_CONFIG = CONFIGS_DIR / "experiments" / "malconv-raw.yaml"
@@ -116,7 +117,13 @@ def _experiment_name(settings: dict, config_path: Path) -> str:
 
 
 def _staging_root(settings: dict, config_path: Path, preset: str) -> Path:
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", preset):
+    preset = (
+        settings.get("data", {})
+        .get("manifest_presets", {})
+        .get(preset, {})
+        .get("staging_name", preset)
+    )
+    if not isinstance(preset, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", preset):
         raise SupervisedTrainingError("Preset must be a simple path-safe name.")
     return _experiment_root_path() / "staged" / _experiment_name(settings, config_path) / preset
 
@@ -236,6 +243,9 @@ def _parser() -> argparse.ArgumentParser:
     freeze_raw.add_argument("--summary", type=Path, default=None)
     freeze_raw.add_argument("--total", type=int, default=None)
     freeze_raw.add_argument("--balanced", action="store_true")
+    freeze_raw.add_argument(
+        "--balance-split", action="append", choices=("train", "validation", "test"), default=[]
+    )
     freeze_raw.add_argument("--label-count", action="append", default=[], metavar="LABEL=N")
     freeze_raw.add_argument("--where", action="append", default=[], metavar="COLUMN=VALUE")
     freeze_raw.add_argument("--seed", default=None)
@@ -265,7 +275,35 @@ def _parser() -> argparse.ArgumentParser:
         help="Override <project>/work/staged/<experiment>/<preset>.",
     )
     stage.add_argument("--resume", action="store_true")
+    stage.add_argument(
+        "--reuse-root", type=Path, help="Verify and hardlink cached files from this root."
+    )
     stage.add_argument("--progress-every", type=int, default=100)
+    stage.add_argument(
+        "--workers", type=int, default=1, help="Concurrent staging workers (1..32)."
+    )
+
+    network = experiment_commands.add_parser(
+        "stage-network",
+        help="Relay frozen S3 inputs to a Runpod Network Volume on an isolated worker.",
+    )
+    network.add_argument("--experiment", type=Path, default=DEFAULT_MALCONV_RAW_CONFIG)
+    network.add_argument("--preset", default="full")
+    network.add_argument("--manifest", type=Path)
+    network.add_argument("--manifest-summary", type=Path)
+    network.add_argument("--representation", choices=("raw", "exe"), default="raw")
+    network.add_argument("--source-bucket-env")
+    network.add_argument("--destination-prefix", help="Relative path inside the network volume.")
+    network.add_argument("--mount-root", default="/workspace")
+    network.add_argument("--state-root", type=Path)
+    network.add_argument("--workers", type=int, default=4)
+    network.add_argument("--progress-every", type=int, default=100)
+    network.add_argument("--resume", action="store_true")
+    network.add_argument(
+        "--acknowledge-isolated-worker",
+        action="store_true",
+        help="Confirm authorized private transfer on an isolated worker, never a personal computer.",
+    )
 
     prepare_exe = experiment_commands.add_parser(
         "prepare-rands-exe",
@@ -741,6 +779,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             custom_selection = (
                 args.total is not None
                 or args.balanced
+                or args.balance_split
                 or bool(args.label_count)
                 or bool(args.where)
                 or args.seed is not None
@@ -784,6 +823,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 summary_path,
                 total=preset.total if preset_name != "custom" else args.total,
                 balanced=preset.balanced if preset_name != "custom" else args.balanced,
+                balance_splits=preset.balance_splits
+                if preset_name != "custom"
+                else tuple(args.balance_split),
                 label_counts=label_counts,
                 where=tuple(where),
                 seed=args.seed,
@@ -791,6 +833,54 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_year=args.max_year,
             )
             print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "stage-network":
+            if not args.acknowledge_isolated_worker:
+                raise StageError(
+                    "Network staging requires --acknowledge-isolated-worker; sample bytes pass through RAM."
+                )
+            if (args.manifest is None) != (args.manifest_summary is None):
+                raise StageError("Custom staging needs both --manifest and --manifest-summary.")
+            settings = _experiment_settings(args.experiment)
+            source_env = args.source_bucket_env or settings.get("data", {}).get("bucket_env")
+            source_bucket = os.environ.get(source_env or "")
+            destination = {
+                key: os.environ.get("RUNPOD_S3_" + key)
+                for key in ("BUCKET", "ENDPOINT_URL", "REGION")
+            }
+            if not source_bucket or not all(destination.values()):
+                raise StageError(
+                    "Set the source bucket and RUNPOD_S3_BUCKET, RUNPOD_S3_ENDPOINT_URL, RUNPOD_S3_REGION."
+                )
+            if args.manifest and (not args.destination_prefix or not args.state_root):
+                raise StageError(
+                    "Custom network manifests need explicit --destination-prefix and --state-root."
+                )
+            local_root = _staging_root(settings, args.experiment, args.preset)
+            prefix = args.destination_prefix or (
+                "malweave/" + local_root.relative_to(PROJECT_ROOT).as_posix()
+            )
+            report = stage_network(
+                args.manifest or _preset_path(settings, args.preset, "manifest"),
+                args.manifest_summary or _preset_path(settings, args.preset, "summary"),
+                args.state_root
+                or PROJECT_ROOT
+                / "work"
+                / "network-staging"
+                / _experiment_name(settings, args.experiment)
+                / local_root.name,
+                source_bucket=source_bucket,
+                destination_bucket=destination["BUCKET"],
+                destination_prefix=prefix,
+                destination_endpoint=destination["ENDPOINT_URL"],
+                destination_region=destination["REGION"],
+                mount_root=args.mount_root,
+                representation=args.representation,
+                workers=args.workers,
+                resume=args.resume,
+                progress_every=args.progress_every,
+            )
+            print(json.dumps(report, indent=2, sort_keys=True))
             return 0
         if args.command == "experiment" and args.experiment_command == "stage-inputs":
             if args.preset is None and args.manifest is None:
@@ -818,6 +908,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if output_root is None:
                 raise StageError("Custom staging needs --output-root.")
+            reuse_root = args.reuse_root
+            if reuse_root is None and args.preset:
+                selection = data.get("manifest_presets", {}).get(args.preset, {})
+                if selection.get("reuse_root"):
+                    reuse_root = _preset_path(settings, args.preset, "reuse_root")
             summary = stage_manifest_from_s3(
                 manifest,
                 manifest_summary,
@@ -826,6 +921,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 representation=args.representation,
                 resume=args.resume,
                 progress_every=args.progress_every,
+                workers=args.workers,
+                reuse_root=reuse_root,
             )
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
@@ -1034,6 +1131,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
         if args.command == "experiment" and args.experiment_command == "train":
+            from malweave.training.supervised import run_supervised_training
+
             result = run_supervised_training(_training_request(args, argv))
             print(json.dumps(result["metrics"], indent=2, sort_keys=True))
             return 0
@@ -1064,6 +1163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         TrainingManifestError,
         ByteSourceError,
         StageError,
+        RelayError,
         OSError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)

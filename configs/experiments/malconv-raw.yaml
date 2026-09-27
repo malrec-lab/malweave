@@ -22,8 +22,11 @@ data:
     inventory_summary: reports/rands/raw-s3/inventory.json
   manifest_presets:
     full:
-      manifest: data/processed/rands/raw-s3/raw-all-available-split.csv
-      summary: reports/rands/raw-s3/raw-all-available-split.json
+      balance_splits: [train]
+      manifest: data/processed/rands/raw-s3/raw-train-balanced-full-split.csv
+      summary: reports/rands/raw-s3/raw-train-balanced-full-split.json
+      staging_name: full-train-balanced
+      reuse_root: work/staged/rands-malconv-raw/full
     pilot:
       total: 1000
       balanced: true

@@ -7,6 +7,7 @@ No object is fetched or local directory created merely by importing this module.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterator
 from hashlib import sha256
 from pathlib import Path
 import time
@@ -60,6 +61,14 @@ class S3ByteSource:
         self._client = client
 
     def read(self, sample: TrainingSample) -> bytes:
+        return b"".join(self.iter_chunks(sample))
+
+    def iter_chunks(
+        self, sample: TrainingSample, chunk_size: int = 1024 * 1024
+    ) -> Iterator[bytes]:
+        """Stream one pinned object; always close the body, even when a consumer stops."""
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be positive.")
         if not sample.object_key:
             raise ByteSourceError("The S3 object key is missing from the split manifest.")
         if self._client is None:
@@ -72,16 +81,22 @@ class S3ByteSource:
         if sample.object_version:
             request["VersionId"] = sample.object_version
         try:
-            response = self._client.get_object(**request)
-            body = response["Body"]
-            try:
-                return body.read()
-            finally:
-                body.close()
+            body = self._client.get_object(**request)["Body"]
         except Exception as error:
             raise ByteSourceError(
                 "Could not read the declared S3 representation.", code="s3_error"
             ) from error
+        try:
+            while True:
+                try:
+                    chunk = body.read(chunk_size)
+                except Exception as error:
+                    raise ByteSourceError("S3 stream interrupted.", code="s3_error") from error
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            body.close()
 
 
 class VerifiedByteSource:

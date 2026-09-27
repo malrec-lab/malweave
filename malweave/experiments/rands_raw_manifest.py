@@ -42,6 +42,7 @@ class RandsRawManifestPreset:
     summary: Path
     total: int | None
     balanced: bool
+    balance_splits: tuple[str, ...]
     bucket_env: str
 
 
@@ -87,6 +88,15 @@ def load_rands_raw_manifest_preset(path: Path, preset: str) -> RandsRawManifestP
             raise ValueError("Preset bucket environment variable must be nonempty.")
         total = selection.get("total")
         balanced = selection.get("balanced", False)
+        balance_splits = selection.get("balance_splits", [])
+        if (
+            not isinstance(balance_splits, list)
+            or any(not isinstance(s, str) or s not in SPLITS for s in balance_splits)
+            or len(set(balance_splits)) != len(balance_splits)
+        ):
+            raise ValueError("balance_splits must contain unique supported split names.")
+        if balance_splits and (balanced or total is not None):
+            raise ValueError("balance_splits cannot combine with balanced or total.")
         if total is not None and (
             isinstance(total, bool) or not isinstance(total, int) or total < 1
         ):
@@ -107,6 +117,7 @@ def load_rands_raw_manifest_preset(path: Path, preset: str) -> RandsRawManifestP
         summary=resolve(values["summary"]),
         total=total,
         balanced=balanced,
+        balance_splits=tuple(balance_splits),
         bucket_env=bucket_env,
     )
 
@@ -128,6 +139,7 @@ def freeze_rands_raw_manifest(
     *,
     total: int | None = None,
     balanced: bool = False,
+    balance_splits: tuple[str, ...] = (),
     label_counts: dict[str, int] | None = None,
     where: tuple[tuple[str, str], ...] = (),
     seed: str | None = None,
@@ -214,6 +226,7 @@ def freeze_rands_raw_manifest(
         options = ManifestOptions(
             total=total,
             balanced=balanced,
+            balance_splits=balance_splits,
             label_counts=label_counts or {},
             where=where,
             seed=seed or str(config["data"]["selection_seed"]),

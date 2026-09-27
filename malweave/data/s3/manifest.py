@@ -23,6 +23,7 @@ class ManifestOptions:
 
     total: int | None = None
     balanced: bool = False
+    balance_splits: tuple[str, ...] = ()
     label_counts: dict[str, int] = field(default_factory=dict)
     where: tuple[tuple[str, str], ...] = ()
     seed: str = "manifest-v1"
@@ -77,6 +78,17 @@ def select_labeled_rows(
     """Select deterministically within split/label while preserving disjoint groups."""
     if not rows or not splits or not labels:
         raise ManifestSelectionError("No eligible rows, splits, or labels were supplied.")
+    if options.balance_splits:
+        if options.balanced or options.total is not None or options.label_counts:
+            raise ManifestSelectionError(
+                "--balance-split cannot combine with --balanced, --total or --label-count."
+            )
+        if len(set(options.balance_splits)) != len(options.balance_splits) or any(
+            s not in splits for s in options.balance_splits
+        ):
+            raise ManifestSelectionError(
+                "balance_splits must contain unique supported split names."
+            )
     rows, where_exclusions = filter_rows(rows, options.where)
     if not rows:
         raise ManifestSelectionError("No rows remain after --where filters.")
@@ -112,7 +124,17 @@ def select_labeled_rows(
     available = {split: {label: len(pools[split, label]) for label in labels} for split in splits}
     targets: dict[str, dict[str, int]] = {split: {} for split in splits}
 
-    if options.total is None and not options.balanced and not options.label_counts:
+    if options.balance_splits:
+        targets = {split: dict(counts) for split, counts in available.items()}
+        for split in options.balance_splits:
+            smallest = min(available[split].values())
+            if smallest == 0:
+                raise ManifestSelectionError(
+                    f"Cannot balance {split}: at least one label is absent."
+                )
+            targets[split] = {label: smallest for label in labels}
+        mode = "balanced_splits"
+    elif options.total is None and not options.balanced and not options.label_counts:
         targets = available
         mode = "full"
     elif options.total is None and options.balanced:
@@ -168,6 +190,7 @@ def select_labeled_rows(
         "mode": mode,
         "requested_total": options.total,
         "balanced": options.balanced,
+        "balance_splits": list(options.balance_splits) if not options.balanced else list(splits),
         "explicit_label_counts": options.label_counts,
         "seed": options.seed,
         "available_by_split_and_label": available,

@@ -120,6 +120,7 @@ def test_destination_race_verifies_content_without_overwriting(inputs, monkeypat
     original = stage._write_new_verified_file
 
     def race(path, payload):
+        payload = b"".join(payload)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"conflicting bytes" if conflict else payload)
         original(path, payload)
@@ -138,3 +139,54 @@ def test_destination_race_verifies_content_without_overwriting(inputs, monkeypat
     assert (root / "dataset" / digest[:2] / digest).read_bytes() == (
         b"conflicting bytes" if conflict else content
     )
+
+
+def test_new_cohort_reuses_verified_files_without_download_or_copy(inputs):
+    manifest, audit, old_root, client, content = inputs
+    stage.stage_manifest_from_s3(manifest, audit, old_root, bucket="test", client=client)
+    old_state = (old_root / "staging.sqlite").read_bytes()
+    old_report = (old_root / "staging-summary.json").read_bytes()
+    new_root = old_root.with_name("balanced")
+    report = stage.stage_manifest_from_s3(
+        manifest, audit, new_root, bucket="test", client=client, reuse_root=old_root, workers=4
+    )
+    assert report["passed"]
+    assert report["downloaded_bytes_this_run"] == 0
+    assert report["reused_files_this_run"] == 1
+    assert client.calls == 1
+    digest = sha256(content).hexdigest()
+    relative = Path("dataset") / digest[:2] / digest
+    assert (old_root / relative).stat().st_ino == (new_root / relative).stat().st_ino
+    assert (old_root / "staging.sqlite").read_bytes() == old_state
+    assert (old_root / "staging-summary.json").read_bytes() == old_report
+    assert stage.stage_manifest_from_s3(
+        manifest, audit, new_root, bucket="test", client=client, reuse_root=old_root, resume=True
+    )["passed"]
+    assert client.calls == 1
+
+
+def test_reuse_missing_downloads_and_corrupt_cache_is_not_used(inputs):
+    manifest, audit, root, client, content = inputs
+    cache = root.with_name("cache")
+    digest = sha256(content).hexdigest()
+    cached = cache / "dataset" / digest[:2] / digest
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(b"bad cache")
+    with pytest.raises(stage.StageError, match="incomplete"):
+        stage.stage_manifest_from_s3(
+            manifest, audit, root, bucket="test", client=client, reuse_root=cache
+        )
+    assert client.calls == 0
+    report = json.loads((root / "staging-summary.json").read_text())
+    assert report["failure_reasons"] == {"cache_conflict": 1}
+    assert cached.read_bytes() == b"bad cache"
+    result = stage.stage_manifest_from_s3(
+        manifest,
+        audit,
+        root.with_name("fresh"),
+        bucket="test",
+        client=client,
+        reuse_root=root.with_name("missing-cache"),
+    )
+    assert result["passed"]
+    assert result["downloaded_bytes_this_run"] == len(content)

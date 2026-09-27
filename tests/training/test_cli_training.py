@@ -9,7 +9,50 @@ import pytest
 from malweave.cli import _experiment_root_path, _parser, _staging_root, _training_request
 from malweave.config import PROJECT_ROOT
 from malweave.data.s3.inventory import validate_private_path
+from malweave.experiments.rands_raw_manifest import load_rands_raw_manifest_preset
 from malweave.training.supervised import SupervisedTrainingError, _private_path
+
+
+def test_committed_full_config_is_balanced_and_uses_new_staging_report():
+    config = PROJECT_ROOT / "configs/experiments/malconv-raw.yaml"
+    preset = load_rands_raw_manifest_preset(config, "full")
+    assert preset.balanced is False
+    assert preset.balance_splits == ("train",)
+    assert preset.total is None
+    assert preset.manifest.name == "raw-train-balanced-full-split.csv"
+    args = _parser().parse_args(
+        [
+            "experiment",
+            "train",
+            "--experiment",
+            str(config),
+            "--preset",
+            "full",
+            "--run-id",
+            "synthetic",
+        ]
+    )
+    request = _training_request(args, None)
+    assert request.split_manifest_path == preset.manifest
+    assert request.staging_report.parent.name == "full-train-balanced"
+
+
+def test_stage_cli_passes_config_cache_and_separate_root(monkeypatch):
+    from malweave import cli
+
+    captured = {}
+
+    def stage(*args, **kwargs):
+        captured.update(kwargs)
+        captured["root"] = args[2]
+        return {"passed": True}
+
+    monkeypatch.setenv("MALWEAVE_RANDS_S3_BUCKET", "synthetic")
+    monkeypatch.setattr(cli, "stage_manifest_from_s3", stage)
+    assert cli.main(["experiment", "stage-inputs", "--preset", "full", "--workers", "4"]) == 0
+    assert captured["root"].name == "full-train-balanced"
+    assert captured["reuse_root"].name == "full"
+    assert captured["workers"] == 4
 
 
 def test_train_cli_resolves_single_track_and_preset_from_yaml(

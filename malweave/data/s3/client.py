@@ -73,12 +73,20 @@ class S3Page:
     next_token: str | None
 
 
-def make_s3_client() -> Any:
+def make_s3_client(*, max_pool_connections: int = 10) -> Any:
     """Create an AWS-SDK client only when a command actually needs S3."""
     import boto3
     from botocore.config import Config
 
-    return boto3.client("s3", config=Config(retries={"mode": "standard", "max_attempts": 5}))
+    return boto3.client(
+        "s3",
+        config=Config(
+            retries={"mode": "standard", "max_attempts": 5},
+            max_pool_connections=max_pool_connections,
+            connect_timeout=10,
+            read_timeout=60,
+        ),
+    )
 
 
 def list_s3_page(
