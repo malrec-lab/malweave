@@ -53,7 +53,7 @@ def load_training_manifest(
         if legacy:
             required = {"exe_representation_sha256", "active_leakage_group_sha256"}
         else:
-            required = {"group_id", "object_key"}
+            required = {"group_id"}
         if not required.issubset(fields):
             raise TrainingManifestError(
                 "Training manifest lacks representation or grouping fields."
@@ -98,7 +98,7 @@ def load_training_manifest(
                 relative = row.get("relative_path") or (
                     f"{raw_samples_dir}/{source[:2]}/{source}" if representation == "raw" else None
                 )
-                key = row["object_key"] or None
+                key = row.get("object_key") or None
                 etag = row.get("object_etag") or None
                 version = row.get("object_version") or None
                 try:
@@ -107,8 +107,12 @@ def load_training_manifest(
                     raise TrainingManifestError(
                         f"Invalid object size at row {line_number}."
                     ) from error
-                if not key or size is None or size < 1 or not (etag or version):
+                if key and (size is None or size < 1 or not (etag or version)):
                     raise TrainingManifestError(f"Invalid S3 object at row {line_number}.")
+                if not key and (not relative or size is None or size < 1):
+                    raise TrainingManifestError(
+                        f"Invalid local representation at row {line_number}."
+                    )
             if not group or not SHA256_PATTERN.fullmatch(digest or ""):
                 raise TrainingManifestError(f"Invalid group or digest at row {line_number}.")
             if representation == "raw" and digest != source:

@@ -38,6 +38,14 @@ def test_malconvgct_runs_low_memory_scan_and_backpropagates_both_branches() -> N
     assert model.malconv.context_net.embedding.weight.grad is not None
 
 
+def test_malconvgct_pads_input_shorter_than_minimum_chunk() -> None:
+    model = MalConvGCTForSequenceClassification(_config())
+    output = model(torch.tensor([[1]]), labels=torch.tensor([0]))
+
+    assert output.logits.shape == (1, 2)
+    assert output.loss is not None
+
+
 def test_malconvgct_state_dict_round_trip_preserves_logits() -> None:
     torch.manual_seed(11)
     first = MalConvGCTForSequenceClassification(_config()).eval()

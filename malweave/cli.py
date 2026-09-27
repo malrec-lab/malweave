@@ -52,6 +52,10 @@ from malweave.experiments.rands_comparison import (
     split_rands_comparison_cohort,
     write_rands_comparison_split_outputs,
 )
+from malweave.experiments.rands_exe_inputs import (
+    RandsExeInputError,
+    prepare_rands_exe_inputs,
+)
 from malweave.experiments.rands_raw_manifest import (
     RandsRawError,
     freeze_rands_raw_manifest,
@@ -238,6 +242,13 @@ def _parser() -> argparse.ArgumentParser:
     freeze_raw.add_argument("--min-year", type=int, default=None)
     freeze_raw.add_argument("--max-year", type=int, default=None)
 
+    freeze_exe = experiment_commands.add_parser(
+        "freeze-rands-exe",
+        help="Freeze EXE source identities from the audited RanDS metadata inventory.",
+    )
+    freeze_exe.add_argument("--experiment", type=Path, required=True)
+    freeze_exe.add_argument("--preset", choices=("pilot", "full"), default="pilot")
+
     stage = experiment_commands.add_parser(
         "stage-inputs",
         help="Download and verify a complete frozen S3 split on an isolated training worker.",
@@ -255,6 +266,23 @@ def _parser() -> argparse.ArgumentParser:
     )
     stage.add_argument("--resume", action="store_true")
     stage.add_argument("--progress-every", type=int, default=100)
+
+    prepare_exe = experiment_commands.add_parser(
+        "prepare-rands-exe",
+        help="Extract EXE inputs from a frozen, fully staged RAW cohort.",
+    )
+    prepare_exe.add_argument("--experiment", type=Path, required=True)
+    prepare_exe.add_argument("--preset", choices=("pilot", "full"), default="pilot")
+    prepare_exe.add_argument("--source-manifest", type=Path)
+    prepare_exe.add_argument("--source-manifest-summary", type=Path)
+    prepare_exe.add_argument("--bucket-env")
+    prepare_exe.add_argument("--exe-root", type=Path)
+    prepare_exe.add_argument("--state-db", type=Path)
+    prepare_exe.add_argument("--manifest", type=Path)
+    prepare_exe.add_argument("--summary", type=Path)
+    prepare_exe.add_argument("--resume", action="store_true")
+    prepare_exe.add_argument("--limit", type=int)
+    prepare_exe.add_argument("--progress-every", type=int, default=100)
 
     inspect = data_commands.add_parser("inspect", help="Audit a local dataset without mutation.")
     inspect.add_argument("--dataset", choices=("rands",), required=True)
@@ -925,6 +953,86 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
+        if args.command == "experiment" and args.experiment_command == "freeze-rands-exe":
+            settings = _experiment_settings(args.experiment)
+            try:
+                inputs = settings["data"]["manifest_inputs"]
+                preset = settings["data"]["source_manifest_presets"][args.preset]
+            except (KeyError, TypeError) as error:
+                raise RandsExeInputError(
+                    "EXE config lacks inventory or source preset settings."
+                ) from error
+
+            def exe_config_path(value: object) -> Path:
+                if not isinstance(value, str) or not value:
+                    raise RandsExeInputError("EXE config contains an invalid path.")
+                path = Path(value)
+                return path if path.is_absolute() else PROJECT_ROOT / path
+
+            summary = freeze_rands_raw_manifest(
+                exe_config_path(inputs.get("inventory")),
+                exe_config_path(inputs.get("inventory_summary")),
+                args.experiment,
+                exe_config_path(preset.get("manifest")),
+                exe_config_path(preset.get("summary")),
+                total=preset.get("total"),
+                balanced=bool(preset.get("balanced", False)),
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "prepare-rands-exe":
+            settings = _experiment_settings(args.experiment)
+            try:
+                source = settings["data"]["source_manifest_presets"][args.preset]
+                extraction = settings["data"]["extraction"]
+                snapshot = settings["references"]["rands_snapshot"]
+                bucket_env = args.bucket_env or settings["data"]["bucket_env"]
+                prefix = settings["data"]["exe_prefix"]
+                if (
+                    not isinstance(source, dict)
+                    or not isinstance(extraction, dict)
+                    or not isinstance(snapshot, str)
+                    or not snapshot
+                    or not isinstance(bucket_env, str)
+                    or not bucket_env
+                    or not isinstance(prefix, str)
+                    or not prefix
+                ):
+                    raise TypeError
+            except (KeyError, TypeError) as error:
+                raise RandsExeInputError(
+                    "EXE experiment config lacks source preset, extraction, or snapshot settings."
+                ) from error
+
+            def configured_path(value: object, field: str) -> Path:
+                if not isinstance(value, str) or not value:
+                    raise RandsExeInputError(f"Invalid EXE config path: {field}.")
+                path = Path(value)
+                return path if path.is_absolute() else PROJECT_ROOT / path
+
+            bucket = os.environ.get(bucket_env)
+            if not bucket:
+                raise RandsExeInputError(f"Set {bucket_env} on the isolated training worker.")
+            state_root = configured_path(extraction.get("state_root"), "state_root")
+            summary = prepare_rands_exe_inputs(
+                args.source_manifest or configured_path(source.get("manifest"), "source manifest"),
+                args.source_manifest_summary
+                or configured_path(source.get("summary"), "source summary"),
+                bucket,
+                prefix,
+                args.exe_root
+                or configured_path(extraction.get("representation_root"), "representation_root"),
+                args.state_db or state_root / f"{args.preset}.sqlite",
+                args.manifest or _preset_path(settings, args.preset, "manifest"),
+                args.summary or _preset_path(settings, args.preset, "summary"),
+                snapshot=str(snapshot),
+                max_object_bytes=int(extraction.get("max_object_bytes", 2_147_483_648)),
+                resume=args.resume,
+                limit=args.limit,
+                progress_every=args.progress_every,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
         if args.command == "experiment" and args.experiment_command == "train":
             result = run_supervised_training(_training_request(args, argv))
             print(json.dumps(result["metrics"], indent=2, sort_keys=True))
@@ -947,6 +1055,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RandsPeAssessmentError,
         RandsProductError,
         RandsComparisonError,
+        RandsExeInputError,
         RandsRawError,
         RandsS3Error,
         S3InventoryError,

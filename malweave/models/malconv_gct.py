@@ -49,10 +49,11 @@ class _LowMemoryConvBase(nn.Module):
     def seq2fix(self, input_ids: Tensor, **process_kwargs: Tensor) -> Tensor:
         """Select per-channel maxima from chunks, then recompute only their receptive windows."""
         receptive_field = self.receptive_field
-        if input_ids.shape[1] < receptive_field:
+        minimum_length = max(self.min_chunk_size, receptive_field)
+        if input_ids.shape[1] < minimum_length:
             input_ids = F.pad(
                 input_ids,
-                (0, receptive_field - input_ids.shape[1]),
+                (0, minimum_length - input_ids.shape[1]),
                 value=self.pad_token_id,
             )
         batch_size, length = input_ids.shape

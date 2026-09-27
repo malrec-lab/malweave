@@ -29,6 +29,7 @@ nav:
       - Research workstreams: workflows/research-workstreams.md
       - Experiments:
           - MalConv RAW S3 training plan: workflows/experiments/malconv-raw-s3-training-plan.md
+          - MalConvGCT EXE: workflows/experiments/malconv-exe.md
           - MalConv RAW: workflows/experiments/malconv-raw.md
           - S3 inventories and RAW manifests: workflows/experiments/s3-manifests.md
       - Distributed Ghidra extraction: workflows/distributed-ghidra.md

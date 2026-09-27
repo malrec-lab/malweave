@@ -224,22 +224,34 @@ def _track_config(config: dict[str, Any], track: str) -> dict[str, Any]:
     return track_config
 
 
+def _track_representation(config: dict[str, Any], track: str) -> str:
+    """Resolve an optional representation override while preserving existing track defaults."""
+    representation = _track_config(config, track).get(
+        "representation", TRACK_REPRESENTATIONS[track]
+    )
+    if representation not in {"raw", "exe"}:
+        raise SupervisedTrainingError(f"tracks.{track}.representation must be raw or exe.")
+    if track in {"hrrformer", "mamba"} and representation != "exe":
+        raise SupervisedTrainingError(f"{track} requires the EXE representation.")
+    return representation
+
+
 def _build_model(
-    config: dict[str, Any], track: str, tokenizer: Any | None
+    config: dict[str, Any], track: str, tokenizer: Any | None, representation: str
 ) -> tuple[nn.Module, int, bool]:
     track_config = _track_config(config, track)
     architecture = track_config.get("architecture")
     if not isinstance(architecture, dict):
         raise SupervisedTrainingError(f"tracks.{track}.architecture must be a mapping.")
     if track == "malconvgct":
-        raw = config["inputs"]["raw"]
+        byte_input = config["inputs"][representation]
         model_config = {
             **architecture,
             "chunk_size": int(architecture.get("chunk_size", 65_536)),
             "min_chunk_size": int(architecture.get("min_chunk_size", 1_024)),
         }
         model = MalConvGCTForSequenceClassification(MalConvGCTConfig(**model_config))
-        return model, int(raw["truncation"]["max_bytes"]), False
+        return model, int(byte_input["truncation"]["max_bytes"]), False
     if tokenizer is None:
         raise SupervisedTrainingError("EXE tracks require a train-partition tokenizer.")
     exe = config["inputs"]["exe"]
@@ -376,7 +388,7 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     config = _load_mapping(request.config_path)
     if config.get("experiment", {}).get("kind") not in {"benchmark", "feasibility"}:
         raise SupervisedTrainingError("Experiment config kind must be benchmark or feasibility.")
-    representation = TRACK_REPRESENTATIONS[request.track]
+    representation = _track_representation(config, request.track)
     examples = load_supervised_split(
         request.split_manifest_path,
         representation,
@@ -406,20 +418,20 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         f"train={len(train_rows)} validation={len(validation_rows)} test={len(test_rows)}"
     )
     source = _training_source(request, representation, staged_root)
-    if representation == "raw":
+    if request.track == "malconvgct":
         adapter: InputAdapter = RawInputAdapter(
-            int(config["inputs"]["raw"]["truncation"]["max_bytes"])
+            int(config["inputs"][representation]["truncation"]["max_bytes"])
         )
     else:
         adapter = ExeInputAdapter(
             max_tokens=int(config["inputs"]["exe"]["truncation"]["max_tokens"]),
             vocab_size=int(config["inputs"]["exe"]["tokenizer"]["vocab_size"]),
         )
-    if representation == "exe":
+    if isinstance(adapter, ExeInputAdapter):
         _progress("phase=fit-tokenizer")
     adapter.fit(train_rows, source)
     tokenizer = adapter.tokenizer
-    model, _, use_attention_mask = _build_model(config, request.track, tokenizer)
+    model, _, use_attention_mask = _build_model(config, request.track, tokenizer, representation)
     model.to(device)
     datasets = {
         split: _SupervisedDataset(

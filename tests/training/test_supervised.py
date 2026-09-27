@@ -244,3 +244,59 @@ def test_staging_records_failure_and_resumes_without_rewriting_success(tmp_path:
     assert passed["passed"] is True
     assert passed["downloaded_bytes_this_run"] == len(b"second")
     assert passed["output_bytes"] == len(b"firstsecond")
+
+
+def test_malconvgct_exe_run_reuses_byte_adapter_and_training_loop(tmp_path: Path) -> None:
+    """Exercise MalConvGCT on synthetic EXE representations without changing the model."""
+    import yaml
+
+    from malweave.config import PROJECT_ROOT
+
+    committed = PROJECT_ROOT / "configs/experiments/malconv-exe.yaml"
+    config = yaml.safe_load(committed.read_text())
+    config["inputs"]["exe"]["truncation"]["max_bytes"] = 1024
+    config["tracks"]["malconvgct"]["architecture"].update(
+        embedding_size=2, channels=2, stride=1, kernel_size=2, layers=1
+    )
+    config_path = tmp_path / "exe.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+    split_path = tmp_path / "split.csv"
+    _write_private_split(split_path, tmp_path / "raw")
+    with split_path.open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    for index, row in enumerate(rows):
+        content = bytes([index + 1]) * 32
+        destination = tmp_path / row["exe_relative_path"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        digest = sha256(content).hexdigest()
+        row["exe_size"] = str(len(content))
+        row["exe_representation_sha256"] = digest
+        row["active_leakage_group_sha256"] = digest
+    with split_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SPLIT_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    result = run_supervised_training(
+        SupervisedRunRequest(
+            track="malconvgct",
+            config_path=config_path,
+            split_manifest_path=split_path,
+            raw_root=None,
+            exe_root=tmp_path,
+            artifact_root=tmp_path / "artifacts",
+            run_id="exe",
+            device="cpu",
+            gradient_accumulation_steps=1,
+            seed=42,
+        )
+    )
+
+    run_dir = tmp_path / "artifacts/exe"
+    assert result["manifest"]["track"] == "malconvgct"
+    assert result["manifest"]["representation"] == "exe"
+    assert result["manifest"]["tokenizer_sha256"] is None
+    assert result["metrics"]["test"]["roc_auc"] is not None
+    assert (run_dir / "best.pt").is_file()
+    assert not (run_dir / "tokenizer.json").exists()
