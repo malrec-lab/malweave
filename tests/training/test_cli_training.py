@@ -13,6 +13,71 @@ from malweave.experiments.rands_raw_manifest import load_rands_raw_manifest_pres
 from malweave.training.supervised import SupervisedTrainingError, _private_path
 
 
+@pytest.mark.parametrize("command", ["stage-inputs", "stage-network"])
+def test_exe_staging_reuses_common_backends_and_config_representation(monkeypatch, command):
+    from malweave import cli
+
+    captured = {}
+
+    def stage(*args, **kwargs):
+        captured.update(kwargs)
+        return {"passed": True}
+
+    monkeypatch.setenv("MALWEAVE_RANDS_S3_BUCKET", "synthetic")
+    for name in ("BUCKET", "ENDPOINT_URL", "REGION"):
+        monkeypatch.setenv("RUNPOD_S3_" + name, "synthetic")
+    monkeypatch.setattr(cli, "stage_manifest_from_s3", stage)
+    monkeypatch.setattr(cli, "stage_network", stage)
+    args = [
+        "experiment",
+        command,
+        "--experiment",
+        str(PROJECT_ROOT / "configs/experiments/malconv-exe.yaml"),
+        "--preset",
+        "full",
+    ]
+    if command == "stage-network":
+        args.append("--acknowledge-isolated-worker")
+    assert cli.main(args) == 0
+    assert captured["representation"] == "exe"
+    if command == "stage-network":
+        assert captured["destination_prefix"].endswith(
+            "rands-malconv-exe/full-train-balanced-independent"
+        )
+
+
+def test_exe_freeze_and_prepare_are_independent_metadata_aliases(monkeypatch, tmp_path):
+    from malweave import cli
+
+    captured = {}
+
+    def freeze(*args, **kwargs):
+        captured.update(kwargs)
+        return {"passed": True}
+
+    def forbid_raw(*args, **kwargs):
+        raise AssertionError("EXE must not call RAW freezing")
+
+    monkeypatch.setattr(cli, "freeze_rands_raw_manifest", forbid_raw)
+    monkeypatch.setattr(cli, "prepare_rands_metadata", lambda *a, **kw: tmp_path)
+    monkeypatch.setattr(cli, "freeze_exe_s3_manifest", freeze)
+    monkeypatch.setenv("MALWEAVE_RANDS_S3_BUCKET", "synthetic")
+    config = str(PROJECT_ROOT / "configs/experiments/malconv-exe.yaml")
+    assert (
+        cli.main(["experiment", "freeze-rands-exe", "--experiment", config, "--preset", "full"])
+        == 0
+    )
+    assert captured["total"] is None
+    assert captured["metadata_filters"] == {"arch": "I386", "packed": False}
+    assert captured["year_ranges"]["train"] == {"max": 2022}
+    captured.clear()
+    assert (
+        cli.main(["experiment", "prepare-rands-exe", "--experiment", config, "--preset", "full"])
+        == 0
+    )
+    assert captured["metadata_key"] == "rands/representations/exe/manifest.csv"
+
+
 def test_committed_full_config_is_balanced_and_uses_new_staging_report():
     config = PROJECT_ROOT / "configs/experiments/malconv-raw.yaml"
     preset = load_rands_raw_manifest_preset(config, "full")

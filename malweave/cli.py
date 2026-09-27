@@ -55,8 +55,8 @@ from malweave.experiments.rands_comparison import (
 )
 from malweave.experiments.rands_exe_inputs import (
     RandsExeInputError,
-    prepare_rands_exe_inputs,
 )
+from malweave.experiments.rands_exe_manifest import freeze_exe_s3_manifest
 from malweave.experiments.rands_raw_manifest import (
     RandsRawError,
     freeze_rands_raw_manifest,
@@ -252,13 +252,6 @@ def _parser() -> argparse.ArgumentParser:
     freeze_raw.add_argument("--min-year", type=int, default=None)
     freeze_raw.add_argument("--max-year", type=int, default=None)
 
-    freeze_exe = experiment_commands.add_parser(
-        "freeze-rands-exe",
-        help="Freeze EXE source identities from the audited RanDS metadata inventory.",
-    )
-    freeze_exe.add_argument("--experiment", type=Path, required=True)
-    freeze_exe.add_argument("--preset", choices=("pilot", "full"), default="pilot")
-
     stage = experiment_commands.add_parser(
         "stage-inputs",
         help="Download and verify a complete frozen S3 split on an isolated training worker.",
@@ -267,7 +260,7 @@ def _parser() -> argparse.ArgumentParser:
     stage.add_argument("--preset", default=None)
     stage.add_argument("--manifest", type=Path, default=None)
     stage.add_argument("--manifest-summary", type=Path, default=None)
-    stage.add_argument("--representation", choices=("raw", "exe"), default="raw")
+    stage.add_argument("--representation", choices=("raw", "exe"), default=None)
     stage.add_argument("--bucket-env", default=None)
     stage.add_argument(
         "--output-root",
@@ -291,7 +284,7 @@ def _parser() -> argparse.ArgumentParser:
     network.add_argument("--preset", default="full")
     network.add_argument("--manifest", type=Path)
     network.add_argument("--manifest-summary", type=Path)
-    network.add_argument("--representation", choices=("raw", "exe"), default="raw")
+    network.add_argument("--representation", choices=("raw", "exe"), default=None)
     network.add_argument("--source-bucket-env")
     network.add_argument("--destination-prefix", help="Relative path inside the network volume.")
     network.add_argument("--mount-root", default="/workspace")
@@ -307,20 +300,17 @@ def _parser() -> argparse.ArgumentParser:
 
     prepare_exe = experiment_commands.add_parser(
         "prepare-rands-exe",
-        help="Extract EXE inputs from a frozen, fully staged RAW cohort.",
+        aliases=["freeze-rands-exe"],
+        help="Freeze existing EXE S3 metadata for common local or network staging; no sample reads.",
     )
     prepare_exe.add_argument("--experiment", type=Path, required=True)
     prepare_exe.add_argument("--preset", choices=("pilot", "full"), default="pilot")
-    prepare_exe.add_argument("--source-manifest", type=Path)
-    prepare_exe.add_argument("--source-manifest-summary", type=Path)
+    prepare_exe.add_argument("--metadata-root", type=Path)
     prepare_exe.add_argument("--bucket-env")
-    prepare_exe.add_argument("--exe-root", type=Path)
-    prepare_exe.add_argument("--state-db", type=Path)
+    prepare_exe.add_argument("--state-root", type=Path)
     prepare_exe.add_argument("--manifest", type=Path)
     prepare_exe.add_argument("--summary", type=Path)
     prepare_exe.add_argument("--resume", action="store_true")
-    prepare_exe.add_argument("--limit", type=int)
-    prepare_exe.add_argument("--progress-every", type=int, default=100)
 
     inspect = data_commands.add_parser("inspect", help="Audit a local dataset without mutation.")
     inspect.add_argument("--dataset", choices=("rands",), required=True)
@@ -875,7 +865,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 destination_endpoint=destination["ENDPOINT_URL"],
                 destination_region=destination["REGION"],
                 mount_root=args.mount_root,
-                representation=args.representation,
+                representation=args.representation
+                or settings.get("data", {}).get("representation", "raw"),
                 workers=args.workers,
                 resume=args.resume,
                 progress_every=args.progress_every,
@@ -918,7 +909,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 manifest_summary,
                 output_root,
                 bucket=bucket,
-                representation=args.representation,
+                representation=args.representation or data.get("representation", "raw"),
                 resume=args.resume,
                 progress_every=args.progress_every,
                 workers=args.workers,
@@ -1050,43 +1041,32 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
-        if args.command == "experiment" and args.experiment_command == "freeze-rands-exe":
+        if args.command == "experiment" and args.experiment_command in {
+            "prepare-rands-exe",
+            "freeze-rands-exe",
+        }:
             settings = _experiment_settings(args.experiment)
             try:
-                inputs = settings["data"]["manifest_inputs"]
-                preset = settings["data"]["source_manifest_presets"][args.preset]
-            except (KeyError, TypeError) as error:
-                raise RandsExeInputError(
-                    "EXE config lacks inventory or source preset settings."
-                ) from error
-
-            def exe_config_path(value: object) -> Path:
-                if not isinstance(value, str) or not value:
-                    raise RandsExeInputError("EXE config contains an invalid path.")
-                path = Path(value)
-                return path if path.is_absolute() else PROJECT_ROOT / path
-
-            summary = freeze_rands_raw_manifest(
-                exe_config_path(inputs.get("inventory")),
-                exe_config_path(inputs.get("inventory_summary")),
-                args.experiment,
-                exe_config_path(preset.get("manifest")),
-                exe_config_path(preset.get("summary")),
-                total=preset.get("total"),
-                balanced=bool(preset.get("balanced", False)),
-            )
-            print(json.dumps(summary, indent=2, sort_keys=True))
-            return 0
-        if args.command == "experiment" and args.experiment_command == "prepare-rands-exe":
-            settings = _experiment_settings(args.experiment)
-            try:
-                source = settings["data"]["source_manifest_presets"][args.preset]
-                extraction = settings["data"]["extraction"]
+                selection = settings["data"]["manifest_presets"][args.preset]
+                extraction = settings["data"]["exe_manifest"]
+                if not isinstance(extraction, dict):
+                    raise TypeError
+                expected_policy = {
+                    "balance_splits": ["train"],
+                    "unavailable_policy": "report_and_exclude",
+                    "same_split_duplicate_policy": "retain",
+                    "cross_split_duplicate_policy": "fail",
+                    "cross_label_duplicate_policy": "fail",
+                }
+                if any(extraction.get(k) != v for k, v in expected_policy.items()):
+                    raise RandsExeInputError("Unsupported EXE selection policy.")
+                metadata_key = extraction["metadata_key"]
+                selection_seed = settings["data"]["selection_seed"]
                 snapshot = settings["references"]["rands_snapshot"]
                 bucket_env = args.bucket_env or settings["data"]["bucket_env"]
                 prefix = settings["data"]["exe_prefix"]
                 if (
-                    not isinstance(source, dict)
+                    not isinstance(selection, dict)
                     or not isinstance(extraction, dict)
                     or not isinstance(snapshot, str)
                     or not snapshot
@@ -1094,11 +1074,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     or not bucket_env
                     or not isinstance(prefix, str)
                     or not prefix
+                    or not isinstance(metadata_key, str)
+                    or not metadata_key
+                    or not isinstance(selection_seed, str)
+                    or not selection_seed
                 ):
                     raise TypeError
             except (KeyError, TypeError) as error:
                 raise RandsExeInputError(
-                    "EXE experiment config lacks source preset, extraction, or snapshot settings."
+                    "EXE experiment config lacks metadata, selection, or snapshot settings."
                 ) from error
 
             def configured_path(value: object, field: str) -> Path:
@@ -1111,22 +1095,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not bucket:
                 raise RandsExeInputError(f"Set {bucket_env} on the isolated training worker.")
             state_root = configured_path(extraction.get("state_root"), "state_root")
-            summary = prepare_rands_exe_inputs(
-                args.source_manifest or configured_path(source.get("manifest"), "source manifest"),
-                args.source_manifest_summary
-                or configured_path(source.get("summary"), "source summary"),
-                bucket,
-                prefix,
-                args.exe_root
-                or configured_path(extraction.get("representation_root"), "representation_root"),
-                args.state_db or state_root / f"{args.preset}.sqlite",
+            dataset_config = load_rands_dataset_config(
+                configured_path(settings["data"].get("dataset_config"), "dataset_config")
+            )
+            metadata_root = args.metadata_root or prepare_rands_metadata(
+                dataset_config,
+                configured_path(extraction.get("metadata_cache"), "metadata_cache"),
+                bucket=bucket,
+                prefix=extraction["metadata_prefix"],
+            )
+            summary = freeze_exe_s3_manifest(
+                metadata_root,
+                dataset_config,
                 args.manifest or _preset_path(settings, args.preset, "manifest"),
                 args.summary or _preset_path(settings, args.preset, "summary"),
+                args.state_root or state_root / args.preset,
+                bucket=bucket,
+                prefix=prefix,
+                metadata_key=metadata_key,
+                seed=selection_seed,
                 snapshot=str(snapshot),
-                max_object_bytes=int(extraction.get("max_object_bytes", 2_147_483_648)),
+                year_ranges=settings["split"]["year_ranges"],
+                metadata_filters=settings["data"]["metadata_filters"],
+                fractions=settings["split"]["fractions"],
+                total=selection.get("total"),
                 resume=args.resume,
-                limit=args.limit,
-                progress_every=args.progress_every,
             )
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0

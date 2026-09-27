@@ -1,5 +1,5 @@
 # MalConvGCT on statically extracted executable-section bytes.
-# The source inventory and temporal cohort policy intentionally match malconv-raw.yaml.
+# Independently selected from EXE S3 objects and shared RanDS label metadata.
 experiment:
   name: rands-malconv-exe
   dataset: rands
@@ -8,55 +8,37 @@ experiment:
 
 references:
   rands_snapshot: "2026-09-02"
-  source_experiment: configs/experiments/malconv-raw.yaml
 
 data:
+  representation: exe
+  dataset_config: configs/datasets/rands-raw-2026.yaml
   bucket_env: MALWEAVE_RANDS_S3_BUCKET
-  # Inventory validates source availability and freezes the RAW baseline identities/splits.
-  # EXE preparation downloads bytes from exe_prefix below.
-  raw_prefix: RanDS_PE_Dataset/dataset/
   exe_prefix: rands/representations/exe/
-  inventory:
-    metadata_prefix: RanDS_PE_Dataset/
-    metadata_cache: data/processed/rands/raw-s3/metadata
-    state_db: data/processed/rands/raw-s3/inventory.sqlite
-    protocol: lmlm_x86_unpacked
   metadata_filters: {arch: I386, packed: false}
   source_policy:
     deduplicate_by: source_sha256
     exclude_conflicting_labels: true
     verify_sha256: true
-  manifest_inputs:
-    inventory: data/processed/rands/raw-s3/raw-metadata-candidates.csv
-    inventory_summary: reports/rands/raw-s3/inventory.json
-
-  # Frozen RAW source cohorts. EXE extraction inherits their rows and splits.
-  source_manifest_presets:
-    full:
-      manifest: data/processed/rands/raw-s3/raw-all-available-split.csv
-      summary: reports/rands/raw-s3/raw-all-available-split.json
-    pilot:
-      total: 1000
-      balanced: true
-      manifest: data/processed/rands/raw-s3/raw-pilot-1000.csv
-      summary: reports/rands/raw-s3/raw-pilot-1000.json
-
   # Derived manifests produced by `prepare-rands-exe` and consumed by training.
   manifest_presets:
     full:
-      manifest: data/processed/rands/exe-s3/exe-all-available-split.csv
-      summary: reports/rands/exe-s3/exe-all-available-split.json
+      manifest: data/processed/rands/exe-s3/exe-train-balanced-full-independent.csv
+      summary: reports/rands/exe-s3/exe-train-balanced-full-independent.json
+      staging_name: full-train-balanced-independent
     pilot:
-      manifest: data/processed/rands/exe-s3/exe-pilot-1000-v2.csv
-      summary: reports/rands/exe-s3/exe-pilot-1000-v2.json
-  extraction:
-    representation_root: data/processed/rands/exe-s3/representations
-    state_root: data/processed/rands/exe-s3/state
-    method: staged_s3_exe_bytes
-    max_object_bytes: 2147483648
-    inherit_source_split: true
-    on_failure: report_and_exclude_from_paired_cohort
-    duplicate_group_key: representation_sha256
+      total: 1000
+      manifest: data/processed/rands/exe-s3/exe-train-balanced-pilot-independent.csv
+      summary: reports/rands/exe-s3/exe-train-balanced-pilot-independent.json
+      staging_name: pilot-independent
+  exe_manifest:
+    metadata_prefix: RanDS_PE_Dataset/
+    metadata_cache: data/processed/rands/exe-s3/rands-metadata
+    metadata_key: rands/representations/exe/manifest.csv
+    state_root: data/processed/rands/exe-s3/metadata-independent
+    balance_splits: [train]
+    unavailable_policy: report_and_exclude
+    same_split_duplicate_policy: retain
+    cross_split_duplicate_policy: fail
     cross_label_duplicate_policy: fail
   selection_method: sha256_rank_per_label_within_split
   selection_seed: rands-raw-experiment-v1
@@ -73,7 +55,6 @@ split:
     test: {min: 2024}
   fractions: {train: 0.70, validation: 0.15, test: 0.15}
   on_class_shortfall: fail
-  inherit_from_source_manifest: true
 
 inputs:
   exe:
