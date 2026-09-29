@@ -42,7 +42,7 @@ def test_exe_staging_reuses_common_backends_and_config_representation(monkeypatc
     assert captured["representation"] == "exe"
     if command == "stage-network":
         assert captured["destination_prefix"].endswith(
-            "rands-malconv-exe/full-train-balanced-independent"
+            "rands-malconv-exe/full-train-balanced-dedup"
         )
 
 

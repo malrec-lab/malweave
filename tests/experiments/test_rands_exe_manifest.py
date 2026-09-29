@@ -257,6 +257,35 @@ def test_same_split_duplicates_retained(tmp_path):
     assert freeze_exe_s3_manifest(**args)["eligible"] == 9
 
 
+@pytest.mark.parametrize("duplicate", ["same_split", "cross_label"])
+def test_configured_dedup_precedes_train_balance_and_records_decisions(tmp_path, duplicate):
+    args = fixture(tmp_path, duplicate=duplicate)
+    report = freeze_exe_s3_manifest(**args, duplicate_policy="earliest_year_drop_conflicts")
+    assert report["passed"]
+    rows = load_training_manifest(args["manifest"], "exe")
+    assert len({r.representation_sha256 for r in rows}) == len(rows)
+    counts = Counter((r.split, r.label) for r in rows)
+    assert counts["train", 0] == counts["train", 1]
+    assert counts["validation", 0] == counts["validation", 1] == 1
+    assert counts["test", 0] == counts["test", 1] == 1
+    assert report["deduplication"]["removed_rows"] == (1 if duplicate == "same_split" else 2)
+    assert (args["state_root"] / "dedup-decisions.csv").is_file()
+    assert freeze_exe_s3_manifest(
+        **args, duplicate_policy="earliest_year_drop_conflicts", resume=True
+    )["passed"]
+    with pytest.raises(RandsExeInputError, match="settings changed"):
+        freeze_exe_s3_manifest(**args, resume=True)
+
+
+def test_dedup_does_not_restore_late_duplicate_when_coverage_lost(tmp_path):
+    args = fixture(tmp_path, duplicate="cross_split")
+    with pytest.raises(RandsExeInputError, match="lacks at least one class"):
+        freeze_exe_s3_manifest(**args, duplicate_policy="earliest_year_drop_conflicts")
+    report = json.loads(args["summary"].read_text())
+    assert report["deduplication"]["removed_by_reason"] == {"duplicate_later_split": 1}
+    assert not args["manifest"].exists()
+
+
 def test_metadata_resume_reuses_snapshot_and_validates_contract(tmp_path):
     from malweave.data.s3.inventory import S3InventoryError
 

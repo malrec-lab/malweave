@@ -22,24 +22,22 @@ data:
   # Derived manifests produced by `prepare-rands-exe` and consumed by training.
   manifest_presets:
     full:
-      manifest: data/processed/rands/exe-s3/exe-train-balanced-full-independent.csv
-      summary: reports/rands/exe-s3/exe-train-balanced-full-independent.json
-      staging_name: full-train-balanced-independent
+      manifest: data/processed/rands/exe-s3/exe-train-balanced-full-dedup.csv
+      summary: reports/rands/exe-s3/exe-train-balanced-full-dedup.json
+      staging_name: full-train-balanced-dedup
     pilot:
       total: 1000
-      manifest: data/processed/rands/exe-s3/exe-train-balanced-pilot-independent.csv
-      summary: reports/rands/exe-s3/exe-train-balanced-pilot-independent.json
-      staging_name: pilot-independent
+      manifest: data/processed/rands/exe-s3/exe-train-balanced-pilot-dedup.csv
+      summary: reports/rands/exe-s3/exe-train-balanced-pilot-dedup.json
+      staging_name: pilot-dedup
   exe_manifest:
     metadata_prefix: RanDS_PE_Dataset/
     metadata_cache: data/processed/rands/exe-s3/rands-metadata
     metadata_key: rands/representations/exe/manifest.csv
-    state_root: data/processed/rands/exe-s3/metadata-independent
+    state_root: data/processed/rands/exe-s3/metadata-dedup
     balance_splits: [train]
     unavailable_policy: report_and_exclude
-    same_split_duplicate_policy: retain
-    cross_split_duplicate_policy: fail
-    cross_label_duplicate_policy: fail
+    duplicate_policy: earliest_year_drop_conflicts
   selection_method: sha256_rank_per_label_within_split
   selection_seed: rands-raw-experiment-v1
   labels: {benign: 0, ransomware: 1}

@@ -11,7 +11,7 @@ This is a RanDS feasibility extension, not a reproduction of the paper's origina
 
 - Full selects from all available, eligible EXE objects, independently of RAW experiments.
   Shared `Benign.csv`/`Ransomware.csv` provide labels, years, architecture and packing status.
-- Train alone is downsampled deterministically to 50/50, **after EXE availability checks**.
+- Train alone is downsampled deterministically to 50/50, **after EXE availability and dedup**.
   Validation/test retain all eligible source rows; they are not balanced or reassigned.
 - EXE assigns its own splits from Year: train through 2022, validation 2023, test from 2024.
 - Pilot starts with 1,000 source candidates using temporal allocation. Unlike the historical
@@ -19,9 +19,15 @@ This is a RanDS feasibility extension, not a reproduction of the paper's origina
   balancing or missing/unsuccessful EXE exclusions. Full remains uncapped.
 - Missing metadata, unsuccessful extraction and missing S3 objects are counted by split/class.
   EXE size, label or snapshot mismatches fail rather than being silently accepted.
-- Same-source duplicates are rejected by the shared loader. Identical EXE digests across splits
-  **or labels fail publication** with a report. Same-split, same-label duplicates are retained.
-  No samples are silently moved across years or deleted to solve cross-split conflicts.
+- Same-source duplicates are rejected by the shared loader. Dedup groups eligible samples by
+  full EXE representation SHA-256 before pilot sampling and train balancing. Conflicting-label
+  groups are excluded entirely. For same-label groups, keep the earliest Year, breaking ties by
+  lexicographically smallest source SHA-256. This removes same-split duplicates and later-split
+  copies without moving any sample across years. S3 objects are never deleted or modified.
+- The report records removal counts by reason/split/label; private `dedup-decisions.csv` in the
+  metadata state directory records every excluded source and its retained representative, if any.
+  If dedup empties a required split/class, publication fails rather than restoring duplicates.
+  Test scores now describe representations unseen in earlier splits, not an unfiltered population.
 - If EXE eligibility changes the cohort, RAW/EXE scores are not a paired comparison. A paired
   experiment would need a separately declared common cohort; these experiments are independent.
 
@@ -47,10 +53,12 @@ For interrupted metadata preparation add `--resume`. State pins metadata digests
 filters, temporal ranges, size limit and output paths. On leakage/coverage failure inspect the summary;
 no training manifest is published. Use new paths/state for a changed policy or snapshot.
 
-Full output: `data/processed/rands/exe-s3/exe-train-balanced-full-independent.csv`.
-Pilot output: `data/processed/rands/exe-s3/exe-train-balanced-pilot-independent.csv`.
+Full output: `data/processed/rands/exe-s3/exe-train-balanced-full-dedup.csv`.
+Pilot output: `data/processed/rands/exe-s3/exe-train-balanced-pilot-dedup.csv`.
 Reports: `reports/rands/exe-s3/`. Metadata state:
-`data/processed/rands/exe-s3/metadata-independent/<preset>/`.
+`data/processed/rands/exe-s3/metadata-dedup/<preset>/`. Dedup policy is pinned in the resume
+contract. Do not resume the previous fail-on-duplicates state with this new policy; old reports
+and outputs remain intact under their original paths.
 
 ## 2a. Full: common Network Volume staging
 
@@ -69,7 +77,7 @@ Only one worker may own a destination prefix.
 Attach the volume to the GPU Pod at `/workspace`. Default full output root:
 
 ```text
-/workspace/malweave/work/staged/rands-malconv-exe/full-train-balanced-independent/
+/workspace/malweave/work/staged/rands-malconv-exe/full-train-balanced-dedup/
 ```
 
 On the GPU Pod, after deploying matching code and installing the locked environment:
@@ -77,8 +85,8 @@ On the GPU Pod, after deploying matching code and installing the locked environm
 ```bash
 uv run --locked malweave experiment train \
   --experiment configs/experiments/malconv-exe.yaml \
-  --split-manifest work/staged/rands-malconv-exe/full-train-balanced-independent/split-manifest.csv \
-  --staging-report work/staged/rands-malconv-exe/full-train-balanced-independent/staging-summary.json \
+  --split-manifest work/staged/rands-malconv-exe/full-train-balanced-dedup/split-manifest.csv \
+  --staging-report work/staged/rands-malconv-exe/full-train-balanced-dedup/staging-summary.json \
   --run-id malconv-exe-full-001
 ```
 
@@ -109,6 +117,6 @@ and `run-manifest.json`. Keep that directory on the mounted volume for persisten
 `--limit` and download-progress options are removed; use `--state-root` for metadata state and
 the shared stagers for byte transfer. Old manifests/artifacts remain untouched.
 The legacy Python `prepare_rands_exe_inputs` API remains for old callers but is not the current
-CLI workflow. New outputs use `independent` paths, separate from previous local pilot manifests.
+CLI workflow. New outputs use `dedup` paths, separate from previous local pilot manifests.
 The former `--source-manifest` and `--source-manifest-summary` options are removed.
 Use `--metadata-root` only to supply a local directory with the two RanDS metadata CSVs.

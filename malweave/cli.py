@@ -1054,9 +1054,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_policy = {
                     "balance_splits": ["train"],
                     "unavailable_policy": "report_and_exclude",
-                    "same_split_duplicate_policy": "retain",
-                    "cross_split_duplicate_policy": "fail",
-                    "cross_label_duplicate_policy": "fail",
+                    "duplicate_policy": "earliest_year_drop_conflicts",
                 }
                 if any(extraction.get(k) != v for k, v in expected_policy.items()):
                     raise RandsExeInputError("Unsupported EXE selection policy.")
@@ -1119,6 +1117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 metadata_filters=settings["data"]["metadata_filters"],
                 fractions=settings["split"]["fractions"],
                 total=selection.get("total"),
+                duplicate_policy=extraction["duplicate_policy"],
                 resume=args.resume,
             )
             print(json.dumps(summary, indent=2, sort_keys=True))

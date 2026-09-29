@@ -13,6 +13,7 @@ from typing import Any
 from malweave.data.dataset_config import RandsDatasetConfig
 from malweave.data.rands import load_rands_metadata
 from malweave.data.s3.client import make_s3_client, read_s3_object
+from malweave.data.s3.dedup import deduplicate_temporal_rows
 from malweave.data.s3.inventory import inventory_s3_prefix, validate_private_path
 from malweave.data.s3.manifest import ManifestOptions, ManifestSelectionError, select_labeled_rows
 from malweave.experiments.rands_exe_inputs import RandsExeInputError
@@ -53,6 +54,7 @@ def freeze_exe_s3_manifest(
     metadata_filters: dict[str, Any],
     fractions: dict[str, float] | None = None,
     total: int | None = None,
+    duplicate_policy: str = "fail",
     resume: bool = False,
     client: Any = None,
 ) -> dict[str, Any]:
@@ -60,8 +62,8 @@ def freeze_exe_s3_manifest(
 
     A durable prefix inventory supplies ETags/sizes; the extraction metadata supplies
     expected content digests. Actual bytes are verified later by the shared stager.
-    Cross-split or cross-label identical representations fail closed, like training.
-    Only train is balanced, after availability filtering; evaluation is not sampled.
+    Explicit dedup can retain earliest-year representatives and drop label conflicts.
+    Remaining cross-split/label conflicts still fail closed. Only train is balanced.
     """
     for path in (manifest, state_root):
         validate_private_path(path)
@@ -82,6 +84,7 @@ def freeze_exe_s3_manifest(
             metadata_filters=metadata_filters,
             fractions=fractions or {"train": 0.7, "validation": 0.15, "test": 0.15},
             total=total,
+            duplicate_policy=duplicate_policy,
             resume=resume,
             client=client,
         )
@@ -93,6 +96,8 @@ def _freeze(metadata_root, dataset_config, manifest, summary, state_root, **opti
         raise RandsExeInputError("EXE outputs exist; use new paths for a new frozen cohort.")
     if not options["bucket"] or not options["prefix"].endswith("/"):
         raise RandsExeInputError("EXE requires a bucket and slash-terminated prefix.")
+    if options["duplicate_policy"] not in {"fail", "earliest_year_drop_conflicts"}:
+        raise RandsExeInputError("Unsupported EXE duplicate policy.")
     metadata = load_rands_metadata(dataset_config, metadata_root)
     if metadata.class_overlap or dataset_config.snapshot != options["snapshot"]:
         raise RandsExeInputError("RanDS metadata labels overlap or snapshot differs.")
@@ -126,7 +131,8 @@ def _freeze(metadata_root, dataset_config, manifest, summary, state_root, **opti
         raise RandsExeInputError("EXE year ranges must be disjoint and chronological.")
     state_root.mkdir(parents=True, exist_ok=True)
     contract = {
-        "schema": 2,
+        "schema": 3,
+        "duplicate_policy": options["duplicate_policy"],
         "metadata_sha256": metadata_digests,
         "expected_sources": dataset_config.expected.files,
         "expected_labels": dataset_config.expected.labels,
@@ -279,10 +285,38 @@ def _freeze(metadata_root, dataset_config, manifest, summary, state_root, **opti
         )
     fractions = {k: Decimal(str(v)) for k, v in options["fractions"].items()}
     cohort = candidates
+    dedup_report = None
+    if options["duplicate_policy"] == "earliest_year_drop_conflicts":
+        cohort, removed, dedup_report = deduplicate_temporal_rows(candidates)
+        decisions = io.StringIO(newline="")
+        decisions_writer = csv.DictWriter(
+            decisions,
+            fieldnames=(
+                "source_sha256",
+                "representation_sha256",
+                "split",
+                "label",
+                "year",
+                "reason",
+                "retained_source_sha256",
+            ),
+            lineterminator="\n",
+        )
+        decisions_writer.writeheader()
+        decisions_writer.writerows(removed)
+        decisions_payload = decisions.getvalue().encode()
+        decisions_path = state_root / "dedup-decisions.csv"
+        if decisions_path.exists():
+            if decisions_path.read_bytes() != decisions_payload:
+                raise RandsExeInputError("Dedup decisions changed; use a new state root.")
+        else:
+            _write_new_verified_file(decisions_path, decisions_payload)
+        dedup_report["decisions_sha256"] = sha256(decisions_payload).hexdigest()
+    post_dedup_count = len(cohort)
     if options["total"] is not None:
         try:
             cohort, _ = select_labeled_rows(
-                candidates,
+                cohort,
                 splits=("train", "validation", "test"),
                 labels=("benign", "ransomware"),
                 fractions=fractions,
@@ -310,14 +344,14 @@ def _freeze(metadata_root, dataset_config, manifest, summary, state_root, **opti
         "metadata_provenance": provenance,
         "object_inventory_sha256": audit["manifest"]["sha256"],
         "selected_sources": len(cohort),
-        "pilot_excluded": len(candidates) - len(cohort),
+        "pilot_excluded": post_dedup_count - len(cohort),
         "eligible": len(candidates),
         "exclusions": dict(exclusions),
         "exclusions_by_split_label_reason": dict(excluded_coverage),
         "cross_split_duplicate_groups": crossing,
         "cross_label_duplicate_groups": conflicts,
-        "same_split_duplicates": "retain",
-        "cross_split_policy": "fail",
+        "duplicate_policy": options["duplicate_policy"],
+        "deduplication": dedup_report,
         "verification": "metadata_only; staging must verify all representation bytes",
     }
     summary.parent.mkdir(parents=True, exist_ok=True)
