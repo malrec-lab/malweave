@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 import csv
 from hashlib import sha256
 import io
@@ -90,10 +91,13 @@ def scan_s3_prefix(
     row_for_object: Callable[[S3Object], tuple[Any, ...] | None],
     *,
     progress_every: int = 25,
+    workers: int = 1,
 ) -> None:
     """Commit each listing page and its continuation token atomically."""
     if progress_every < 1:
         raise S3InventoryError("Progress interval must be positive.")
+    if workers < 1:
+        raise S3InventoryError("workers must be a positive integer.")
     if state_setting(connection, "complete") == "1":
         return
     token = state_setting(connection, "next_token")
@@ -103,7 +107,23 @@ def scan_s3_prefix(
     while True:
         started = time.monotonic()
         try:
-            page = list_s3_page(client, bucket, prefix, continuation_token=token or None)
+            if workers > 1:
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = []
+                    current_token = token or None
+                    for _ in range(workers):
+                        futures.append(
+                            executor.submit(
+                                list_s3_page,
+                                client,
+                                bucket,
+                                prefix,
+                                continuation_token=current_token,
+                            )
+                        )
+                    page = futures[0].result()
+            else:
+                page = list_s3_page(client, bucket, prefix, continuation_token=token or None)
         except S3ListingError as error:
             raise S3InventoryError(
                 "S3 listing failed; durable scan state is preserved."
@@ -156,6 +176,7 @@ def inventory_s3_prefix(
     max_size: int | None = None,
     client: Any = None,
     progress_every: int = 25,
+    workers: int = 1,
 ) -> dict[str, Any]:
     """List any S3 folder to a private object inventory; labels require a dataset adapter."""
     for path in (state_path, manifest_path):
