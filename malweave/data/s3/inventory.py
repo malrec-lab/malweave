@@ -72,8 +72,12 @@ def open_scan_state(
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     # check_same_thread=False: sharded scans share one connection across worker
-    # threads, serialized by a caller-held lock.
+    # threads, serialized by a caller-held lock. WAL plus synchronous=NORMAL keeps
+    # commits cheap on network filesystems: a host crash may drop the tail after
+    # the last checkpoint, which a resume recovers by re-listing those pages.
     connection = sqlite3.connect(path, check_same_thread=False)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous=NORMAL")
     connection.execute(
         "CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)"
     )
@@ -179,7 +183,7 @@ def scan_s3_prefix_sharded(
     *,
     workers: int,
     progress_every: int = 25,
-    commit_pages: int = 5,
+    commit_pages: int = 30,
 ) -> None:
     """Scan independent key shards concurrently with durable, resumable progress.
 
