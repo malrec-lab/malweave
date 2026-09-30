@@ -18,7 +18,9 @@ SOREL_BINARIES_PREFIX = f"{SOREL_RELEASE_PREFIX}binaries/"
 SOREL_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 
 
-def make_unsigned_s3_client(*, region_name: str | None = None) -> Any:
+def make_unsigned_s3_client(
+    *, region_name: str | None = None, max_pool_connections: int = 10
+) -> Any:
     """Create an S3 client that never signs requests or uses local credentials."""
     import boto3
     from botocore import UNSIGNED
@@ -30,6 +32,7 @@ def make_unsigned_s3_client(*, region_name: str | None = None) -> Any:
         config=Config(
             signature_version=UNSIGNED,
             retries={"mode": "standard", "max_attempts": 5},
+            max_pool_connections=max_pool_connections,
         ),
     )
 
@@ -137,6 +140,9 @@ def audit_sorel_binary_prefix(
         resume=resume,
         progress_every=progress_every,
         workers=workers,
+        # SOREL object keys under the binaries prefix are lowercase SHA-256 hex
+        # (plus a possible directory marker), so the ASCII key-shard contract holds.
+        shard_by_ascii=True,
     )
     result = summarize_sorel_binary_inventory(
         state_path,

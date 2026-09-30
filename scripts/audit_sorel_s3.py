@@ -50,7 +50,9 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    client = make_unsigned_s3_client(region_name=args.region)
+    client = make_unsigned_s3_client(
+        region_name=args.region, max_pool_connections=max(10, args.workers)
+    )
     summary = audit_sorel_binary_prefix(
         bucket=args.bucket,
         prefix=args.prefix,
