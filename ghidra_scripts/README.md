@@ -1,5 +1,8 @@
 # Ghidra lifting scripts
 
+> Optional DIS/DEC tooling, deferred from the active PE/EXE pretraining plan. Retained for
+> attribution, reproducibility and synthetic integration checks.
+
 `Lifter.java`, `Disassembler.java`, `Decompiler.java`, and
 `SetAnalysisOptionsForDisassembly.java` are verbatim ports of the Ghidra scripts from
 RawByteClf commit `2502450e40ac00363e168106662aac29821d4a93`, the accompanying code release

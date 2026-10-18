@@ -13,8 +13,9 @@ data/                    Local data lifecycle; Git-ignored
   processed/             Canonical model-ready data
 docs/mkdocs/docs/        Versioned research and dataset documentation
 malweave/                Importable, testable implementation
-  data/                  Loaders, validation, splits, transformations
-  models/                Architectures, tokenizers, checkpoints
+  data/                  Loaders, validation, EXE transformations, byte/BPE utilities
+  experiments/           Benchmark cohorts, leakage groups and splits
+  models/                Architectures and checkpoint interfaces
   training/              Orchestration and training loops
   evaluation/            Metrics and benchmark protocols
   utils/                 Small shared helpers
@@ -32,7 +33,7 @@ tests/                   Automated tests for reusable behavior
 | `configs/` vs. `models/` | An untraceable checkpoint or a secret in Git | Commit safe configuration; save its resolved copy with local artifacts. |
 | `data/raw/` vs. `data/processed/` | Accidental mutation of a benchmark or unclear provenance | Preserve originals and derive model inputs deterministically. |
 | `malweave/` vs. `notebooks/` | Logic that cannot be tested or reused | Prototype in a notebook, then promote stable code into the package. |
-| `evaluation/` vs. `training/` | Benchmark policy silently changing with the model loop | Make split and metric code independently reviewable and testable. |
+| `experiments/` vs. `training/` | Benchmark policy silently changing with the model loop | Keep cohort/split policy independently reviewable; `evaluation/` remains a reserved package for reusable evaluation code. |
 | `docs/` vs. `reports/` | Generated output being confused with project guidance | Keep method and policy docs versioned; regenerate run-specific reports locally. |
 
 ## Reproducibility Contract
@@ -45,6 +46,6 @@ Every reported result should be recoverable from five pieces of information:
 4. Split protocol, preprocessing fit scope, random seed, and evaluation metrics.
 5. Checkpoint and prediction locations, retained in approved local storage.
 
-The base Python toolchain is reconstructed with uv 0.11.9, `.python-version`, and the committed `uv.lock`. Future training dependencies belong in the `train` or a narrowly scoped model/dataset group; GPU drivers and native runtimes require an additional documented compatibility matrix or canonical container. See [Environment and dependencies](development/environment.md).
+The base Python toolchain is reconstructed with uv 0.11.9, `.python-version`, and the committed `uv.lock`. Training dependencies already live in `train`; additional dependencies belong there or in a narrowly scoped model/dataset group; GPU drivers and native runtimes require an additional documented compatibility matrix or canonical container. See [Environment and dependencies](development/environment.md).
 
 Do not place restricted malware samples or material that reveals them in a configuration, notebook output, test fixture, documentation build, or Git history. See the dataset catalog for corpus-specific constraints.

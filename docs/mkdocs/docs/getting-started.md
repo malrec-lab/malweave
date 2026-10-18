@@ -1,48 +1,40 @@
 # Getting Started
 
-## 1. Prepare a local environment
+## 1. Set Up The Environment
 
-Install uv 0.11.9, then synchronize the repository from its committed lock:
+Install uv **0.11.9**, then run from the repository root:
 
 ```bash
 uv sync --locked
 make check
 ```
 
-The canonical environment is CPython 3.12.12, recorded in `.python-version`. MalWeave supports
-macOS and Linux with Python 3.10 through 3.12. CI checks Python 3.10 on Ubuntu and Python 3.12.12
-on Ubuntu and macOS. Windows is unsupported; the CLI exits before starting a workflow. uv creates
-`.venv` and installs the exact dependency versions and hashes recorded in `uv.lock`; shell
-activation is optional because Make targets use `uv run --locked`.
+Canonical CPython is **3.12.12**; supported Python is 3.10–3.12 on Linux/macOS. Windows is
+unsupported. uv creates `.venv`; Make uses the locked environment without shell activation.
+Add dependencies through uv; see the [environment policy](development/environment.md).
+Validate GPU/native Mamba compatibility on the target training runtime.
 
-Do not use `pip install` inside the project environment. Add or update dependencies through uv so `pyproject.toml` and `uv.lock` remain synchronized. Ghidra, its JDK, `file`, `diec`, raw corpora, GPU drivers, and other system tools are not installed by this command; see [Environment and dependencies](development/environment.md#external-analysis-tools) before running data extraction.
+## 2. Read The Research And Data Plan
 
-## 2. Select data safely
+Start with the [research protocol](workflows/research-protocol.md),
+[data preparation](workflows/data-preparation.md) and [workstreams](workflows/research-workstreams.md).
 
-Read the relevant [dataset card](datasets/index.md) before downloading anything. Each card states the source, access terms, evaluation constraints, and malware handling requirements. Never put raw samples, feature archives, credentials, or sample inventories into the repository.
+**RanDS has been converted to EXE and uploaded to S3.** The next data tasks are SOREL/Assemblage
+adapters and pilots, followed by cross-source overlap checks and experiment-view preparation.
+Read the [dataset cards](datasets/index.md) for source-specific schemas and identity rules.
 
-Set `MALWEAVE_DATA_DIR` when data must live in an isolated or access-controlled location. The package then uses that directory in place of the repository's ignored `data/` directory. `MALWEAVE_MODELS_DIR` and `MALWEAVE_REPORTS_DIR` provide the same option for large model and report outputs.
+Private data, metadata, inventories, EXE bytes and checkpoints stay outside Git. Configure
+`MALWEAVE_DATA_DIR`, `MALWEAVE_MODELS_DIR` and `MALWEAVE_REPORTS_DIR` for the target storage layout.
+Actual S3 locations/credentials belong in private configuration. An EXE-only storage/manifest
+interface is part of the planned implementation; current CLI dataset adapters support RanDS.
 
-For the current RanDS raw-PE snapshot, keep its machine-specific root outside Git and run the
-read-only release audit before preprocessing:
+If local configuration is needed, copy `.env.example` to `.env` only when `.env` does not exist.
+The CLI loads it on execution; exported shell/CI values take precedence, then explicit CLI roots
+take highest precedence. Synthetic component development needs no corpus mount.
 
-```bash
-cp .env.example .env
-# Defaults expect the combined corpus at data/raw/rands in this checkout.
-# Edit only when raw data or the fast local disk lives elsewhere.
-uv run --locked malweave data inspect --dataset rands
-```
+## 3. Implement A Scoped Task
 
-The MalWeave CLI loads `.env` automatically. A variable already exported by the shell or supplied
-by CI takes precedence over `.env`, and explicit `--root` and `--metadata-root` arguments take
-precedence over both. `--root` means the raw root; omit `--metadata-root` only for the legacy
-combined layout.
-Never commit `.env`; only `.env.example` is versioned.
-
-See [LMLM on RanDS](workflows/lmlm-rands.md) for the release contract, bounded hash
-verification, local manifest creation, and the RanDS data workflow.
-
-## 3. Implement a research task
-
-After setup, use [Onboarding a Research Task](onboarding.md). It is the single guide for reading
-task boundaries, code placement, focused tests, documentation updates, and review before commit.
+Use [model components](workflows/model-components.md), [onboarding](onboarding.md) and
+[project structure](project-structure.md) for code placement and task boundaries.
+Develop data adapters and MLM components alongside one another, then connect them through a
+frozen experiment config. Run focused synthetic tests and `make check` before handoff.

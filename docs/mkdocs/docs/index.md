@@ -1,10 +1,24 @@
 # MalWeave Research Documentation
 
-This documentation records how MalWeave research is organized, reproduced, and reviewed. MalWeave initially focuses on reproducing and extending Large Malware Language Models (LMLM), as an independent research codebase rather than the official implementation of the original LMLM paper. It is the durable home for methodology, dataset guidance, and project decisions; raw data and generated artifacts remain outside version control.
+The study evaluates **external PE/EXE pretraining and label-efficient RanDS fine-tuning**.
+Pretraining uses SOREL malware and Assemblage Windows PE background software. Downstream evaluation
+starts with ransomware-versus-benign detection using a small bidirectional Mamba.
 
-- Start with [Getting started](getting-started.md) for the safe local workflow, then use
-  [Onboarding a Research Task](onboarding.md) before implementing a new task.
-- Use [Environment and dependencies](development/environment.md) as the authoritative guide for Python versions, uv locking, dependency groups, and CI compatibility.
-- Read [Project structure](project-structure.md) before adding a pipeline or experiment.
-- Consult the [Dataset catalog](datasets/index.md) before acquiring or using a malware corpus.
-- See the [Migration report](migration.md) for the CCDS scaffold and document relocation details.
+The data pipeline is **PE → executable/code sections (EXE) → byte mapping → BPE**. Compare
+random-token MLM pretraining against random model initialization at 10%, 25% and 100% training-label
+budgets, then evaluate span masking as a separate extension.
+
+**Current data progress:** RanDS has been converted to EXE and uploaded to S3. Extraction produced
+215,040 successful representations from 215,404 sources, with 364 recorded failures. SOREL/Assemblage
+preparation and MLM integration are the next implementation tasks.
+
+Read in this order:
+
+1. [Research protocol](workflows/research-protocol.md): scope, comparisons and evaluation.
+2. [Data preparation](workflows/data-preparation.md): sources, representations and quality checks.
+3. [Research workstreams](workflows/research-workstreams.md): progress and task order.
+4. [Getting started](getting-started.md) and [model components](workflows/model-components.md).
+5. [Dataset catalog](datasets/index.md) for schema, identity and access conditions.
+
+Use [project structure](project-structure.md), [onboarding](onboarding.md) and the
+[environment guide](development/environment.md) when implementing a task.

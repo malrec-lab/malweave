@@ -5,37 +5,20 @@ theme:
   name: readthedocs
 plugins:
   - search
-  - mermaid2:
-      version: "10.4.0"
-      arguments:
-        theme: base
-        themeVariables:
-          fontSize: 20px
-        flowchart:
-          htmlLabels: true
-          nodeSpacing: 52
-          rankSpacing: 72
-          useMaxWidth: true
-          wrappingWidth: 250
 nav:
   - Home: index.md
-  - Getting started:
-      - Environment setup: getting-started.md
-      - Onboarding a research task: onboarding.md
-  - Workflows:
-      - LMLM on RanDS: workflows/lmlm-rands.md
-      - LMLM on RanDS protocol: workflows/lmlm-rands-protocol.md
-      - LMLM on RanDS architecture: workflows/lmlm-rands-architecture.md
-      - Research workstreams: workflows/research-workstreams.md
-      - Distributed Ghidra extraction: workflows/distributed-ghidra.md
-      - Distributed Ghidra quick start: workflows/distributed-ghidra-quickstart.md
+  - Research:
+      - Research protocol: workflows/research-protocol.md
+      - Data preparation: workflows/data-preparation.md
+      - Workstreams and progress: workflows/research-workstreams.md
+      - Model components: workflows/model-components.md
   - Development:
+      - Getting started: getting-started.md
+      - Onboarding a task: onboarding.md
       - Environment and dependencies: development/environment.md
-  - Project structure: project-structure.md
-  - Migration report: migration.md
-  - Dataset catalog:
+      - Project structure: project-structure.md
+  - Datasets:
       - Overview: datasets/index.md
-      - Assemblage: datasets/assemblage.md
-      - BODMAS: datasets/bodmas.md
-      - RanDS: datasets/rands.md
       - SOREL-20M: datasets/sorel-20m.md
+      - Assemblage: datasets/assemblage.md
+      - RanDS: datasets/rands.md

@@ -4,12 +4,11 @@ This directory records datasets considered for malware machine-learning research
 
 ## Dataset Index
 
-| Dataset | Platform | Primary use | Documentation |
+| Dataset | Current role | Scope | Documentation |
 | --- | --- | --- | --- |
-| Assemblage | Windows PE and Linux ELF | Benign-binary pretraining, function analysis, and provenance | [Assemblage](assemblage.md) |
-| BODMAS | Windows Portable Executable (PE) | Static-feature detection, family classification, and temporal analysis | [BODMAS](bodmas.md) |
-| RanDS | Windows Portable Executable (PE) | Ransomware detection, family classification, and static/dynamic feature research | [RanDS](rands.md) |
-| SOREL-20M | Windows Portable Executable (PE) | Large-scale static detection, tag prediction, and temporal evaluation | [SOREL-20M](sorel-20m.md) |
+| SOREL-20M | External MLM pretraining | Registered malware PE subset; no public raw benign | [SOREL-20M](sorel-20m.md) |
+| Assemblage | External MLM pretraining | Windows PE background software; project/build groups | [Assemblage](assemblage.md) |
+| RanDS | Downstream detection | EXE converted and uploaded to S3; ransomware vs benign | [RanDS](rands.md) |
 
 ## Documentation Rules
 

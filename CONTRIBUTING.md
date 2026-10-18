@@ -23,7 +23,7 @@ Choose the narrowest dependency scope:
 | Lint | `uv add --group lint <package>` | Static analysis and formatting tools |
 | Documentation | `uv add --group docs <package>` | Documentation build dependencies |
 
-The `dev` group includes `test`, `lint`, and `docs`; it should normally contain group references rather than duplicate package declarations. Dataset- or model-specific groups may be introduced when they prevent large or incompatible stacks from being installed unnecessarily.
+The `dev` group includes `test`, `lint`, `docs`, and `train`; it should normally contain group references rather than duplicate package declarations. Dataset- or model-specific groups may be introduced when they prevent large or incompatible stacks from being installed unnecessarily.
 
 After changing a dependency:
 
@@ -47,7 +47,7 @@ checks to pass. Do not add dependency-update bots without explicit maintainer ap
 
 Changing `.python-version`, `project.requires-python`, the CI matrix, or `tool.uv.required-version` is a compatibility decision and must be made together. Update the root README and environment guide in the same pull request.
 
-The current lock covers a CPU-only foundation. When a GPU framework is added, record the supported OS, accelerator, driver, CUDA/runtime, framework, and precision combinations. Prefer a dedicated dependency group and provide a canonical container or system lock when Python locking alone cannot reproduce the native runtime.
+The current lock already includes PyTorch, Transformers and Tokenizers through `train`. Record the supported OS, accelerator, driver, CUDA/runtime, framework, native Mamba kernels and precision combinations for the selected training runtime. Provide a canonical container or system lock when Python locking alone cannot reproduce native behavior.
 
 ## Code and Documentation Checks
 

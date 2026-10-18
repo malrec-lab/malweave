@@ -2,7 +2,8 @@
 
 Place reusable, testable Python code in this package rather than embedding it in notebooks or shell history. Keep the boundaries intentional:
 
-- `data/`: acquisition adapters, schema checks, split construction, and deterministic transformations.
+- `data/`: acquisition adapters, schema checks, byte/BPE utilities and deterministic transformations.
+- `experiments/`: experiment-specific cohorts, leakage grouping and split construction.
 - `models/`: architectures, tokenizer interfaces, and checkpoint loading.
 - `training/`: training loops, callbacks, and run orchestration.
 - `evaluation/`: metrics, benchmark protocols, calibration, and error analysis.

@@ -8,3 +8,8 @@ Dataset configs use YAML and identify local roots through environment-variable n
 may set those variables in the ignored root `.env` using `.env.example` as a template. Configs may
 contain aggregate release counts and protocol filters, but never absolute machine paths or sample
 inventories.
+
+Define external-pretraining and EXE downstream configs using the
+[research protocol](../docs/mkdocs/docs/workflows/research-protocol.md). Configs record source
+scope, input manifests, model/tokenizer settings and evaluation choices. SOREL/Assemblage
+adapters and the EXE-only runner interface are implementation tasks.

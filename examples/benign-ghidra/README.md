@@ -1,5 +1,8 @@
 # Benign Ghidra E2E Fixture
 
+> Optional DIS/DEC tooling, deferred from the active PE/EXE pretraining plan. Retained for
+> attribution, reproducibility and synthetic integration checks.
+
 This directory contains source code for a deterministic, synthetic PE fixture used only by the
 Docker e2e worker test. It never contains a downloaded or executable third-party sample.
 

@@ -45,10 +45,11 @@ Use synthetic fixtures in all tests.
 | Regression tests | `tests/` mirroring source | Yes |
 | Checkpoints, predictions, reports | private artifact root | No |
 
-## RanDS Example
+## Current Research Example
 
-The existing RanDS data pipeline audits the release, extracts full-corpus EXE bytes, and creates
-RAW/EXE product manifests. It can run independently of model work. The
-MalConvGCT, HRRFormer, and Mamba ports can be developed and tested with synthetic bytes on a local
-machine. A RanDS benchmark config later chooses which prepared representation, tokenizer, split,
-and evaluation policy to use.
+Follow the [PE/EXE data workflow](workflows/data-preparation.md). RanDS has been converted to EXE
+and uploaded to S3. In the data workstream, implement SOREL/Assemblage adapters
+with synthetic inputs and source-specific identity rules. In the component workstream, add MLM
+and transfer smoke coverage to the existing Mamba/HRRFormer classifiers. The experiment workstream
+then freezes overlap-controlled views, splits, tokenizer fit and label subsets under the
+[research protocol](workflows/research-protocol.md).

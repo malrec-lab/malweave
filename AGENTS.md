@@ -46,8 +46,10 @@
 ## Task Routing
 
 - Read `docs/mkdocs/docs/datasets/rands.md` before changing RanDS handling.
-- Read `docs/mkdocs/docs/workflows/lmlm-rands.md` before changing the LMLM-on-RanDS workflow.
-- Read `docs/mkdocs/docs/workflows/research-workstreams.md` before planning an LMLM-on-RanDS task.
+- Read `docs/mkdocs/docs/workflows/data-preparation.md` before changing PE/EXE data preparation.
+- Read `docs/mkdocs/docs/workflows/research-protocol.md` before changing the active external
+  PE/EXE pretraining and RanDS downstream protocol.
+- Read `docs/mkdocs/docs/workflows/research-workstreams.md` before planning a research task.
   Keep data preparation, reusable components, and experiments independently scoped.
 - Read `docs/mkdocs/docs/development/environment.md` before changing dependencies or supported
   Python/tool versions.

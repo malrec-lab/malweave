@@ -1,5 +1,9 @@
 # SOREL-20M Malware Dataset
 
+> Active role: registered malware PE subset for external self-supervised pretraining. Raw benign
+> binaries are not publicly released. Access examples below are reference material; select a bounded
+> pilot rather than downloading the full release. A MalWeave adapter is still to be implemented.
+
 ## Overview
 
 **SOREL-20M** (Sophos-ReversingLabs 20 Million) is a large benchmark for static Windows Portable Executable (PE) malware detection. Released by Sophos and ReversingLabs in December 2020, it provides nearly 20 million labelled PE records, pre-extracted EMBER v2 features, PE metadata, vendor-derived behavioral tags, baseline models, and approximately 9.92 million disarmed malware binaries.
@@ -28,7 +32,10 @@ Read the [official terms of use](https://github.com/sophos-ai/SOREL-20M/blob/mas
 
 ## Official Resources and Retrieval
 
-The data bucket is public and no AWS credentials are required. The release root is:
+The data bucket is public and no AWS credentials are required. For this study, download
+`processed-data/meta.db` and read selected `binaries/` objects; the EMBER/LightGBM baseline examples
+below are optional reference material. `meta.db` is 3,788,979,200 bytes (about 3.8 GB / 3.53 GiB);
+the upstream README rounds its size to 3.5 GB. The release root is:
 
 ```text
 s3://sorel-20m/09-DEC-2020/
@@ -48,13 +55,10 @@ The upstream code targets Python 3.6+ and uses Conda. It links a SQLite metadata
 Use the AWS CLI to retrieve only the artifacts needed. `--no-sign-request` makes the intended anonymous access explicit:
 
 ```bash
-mkdir -p data/sorel-20m/processed-data/ember_features
+mkdir -p data/sorel-20m/processed-data
 aws s3 cp --no-sign-request \
   s3://sorel-20m/09-DEC-2020/processed-data/meta.db \
   data/sorel-20m/processed-data/meta.db
-aws s3 sync --no-sign-request \
-  s3://sorel-20m/09-DEC-2020/processed-data/ember_features/ \
-  data/sorel-20m/processed-data/ember_features/
 ```
 
 Set `db_path` in the cloned repository's `config.py` to the directory containing `meta.db`; use a local checkpoint directory rather than the upstream example path.

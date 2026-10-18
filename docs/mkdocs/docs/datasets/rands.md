@@ -1,5 +1,9 @@
 # RanDS Ransomware Dataset
 
+> Role: downstream EXE ransomware-versus-benign detection. RanDS has been converted to EXE
+> and uploaded to S3. See [data preparation](../workflows/data-preparation.md) for the pipeline.
+> Other feature representations below provide dataset background.
+
 ## Overview
 
 **RanDS** is a Windows Portable Executable (PE) corpus for ransomware research. It provides raw ransomware and benign PE samples through a searchable web interface, plus separately downloadable processed releases for static strings, imported/exported APIs, and sandbox-observed behavior. The dataset is intended for ransomware detection, ransomware-family classification, and static/dynamic feature research.
@@ -53,8 +57,8 @@ The released `Ransomware.csv` header lists `Family, Packed, Entropy`, but the ro
 `Packed, Entropy, Family`. Use MalWeave's loader, which detects and normalizes this release-level
 schema mismatch. Do not trust the header through an unvalidated `csv.DictReader`.
 
-Run the read-only audit described in [LMLM on RanDS](../workflows/lmlm-rands.md) before using the
-snapshot. The committed dataset config records aggregate release expectations only; local paths,
+The [data workflow](../workflows/data-preparation.md) defines metadata validation and EXE
+extraction. Audit the release contract before processing a source snapshot. The committed dataset config records aggregate release expectations only; local paths,
 sample hashes, and manifests remain outside version control.
 
 ## Processed Dataset Releases
@@ -133,7 +137,7 @@ If an archive is encrypted, list it and extract it only into a controlled data d
 1. Select one representation and create labels from the CSV source: benign `0`, ransomware `1`; use a ransomware family only for ransomware-only multi-class tasks.
 2. Join rows to features by SHA-256, then report how many samples are excluded because their selected representation is unavailable or malformed.
 3. Split before fitting tokenizers, vocabularies, normalizers, feature selection, resampling, or hyperparameters. Keep all representations of one SHA-256 in the same partition.
-4. For ransomware-family classification, split by family or use a carefully documented family-disjoint protocol when measuring generalization to unseen families. Report the support for each family rather than relying only on a micro-average.
+4. For closed-set ransomware-family classification, retain training support for each evaluated family and report per-family support and macro metrics. A family-disjoint detection protocol tests ransomware detection on held-out families; it is not ordinary closed-set family classification. Define any open-set attribution task separately.
 5. For realistic detection claims, use time-aware and provenance-aware splits when the supplied metadata permits them. Record exactly which `Year` values and collection snapshot were used.
 
 ## Important Caveats
