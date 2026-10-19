@@ -252,3 +252,125 @@ The `binaries/` prefix contains only malware, compressed individually with zlib.
 - [SOREL-20M paper](https://arxiv.org/abs/2012.07634) - dataset composition, release design, temporal benchmark, and baseline methodology.
 - [Sophos release post](https://ai.sophos.com/2020/12/14/sophos-reversinglabs-sorel-20-million-sample-malware-dataset/) - rationale and disarmed-malware discussion.
 - [EMBER feature implementation](https://github.com/elastic/ember/blob/master/ember/features.py) - feature extractor referenced by the SOREL maintainers.
+
+## Freeze Sources For EXE Preparation
+
+Freeze an existing completed inventory before implementing or running EXE extraction:
+
+```bash
+uv run --locked malweave data freeze-sorel-sources \
+  --inventory data/processed/sorel-20m/binaries.csv \
+  --audit reports/sorel-20m/binaries-inventory.json \
+  --manifest data/processed/sorel-20m/sources.csv \
+  --summary reports/sorel-20m/sources-snapshot.json
+```
+
+This offline command verifies the inventory digest, schema, strictly ordered unique source keys,
+row count, and total object size. It copies the listing into a new private manifest and refuses
+existing outputs. The manifest digest identifies the snapshot; the summary records the release,
+bucket, prefix, and verification limits. No sample is downloaded or inspected.
+
+This freezes listing metadata, not S3 object versions or labels. ETags are retained as metadata,
+not treated as sample SHA-256 digests. Later readers must detect remote changes. The source ID
+encoded in each key identifies the original pre-disarming file, not the released bytes. This
+step is not a passing PE-content release audit and does not authorize full-corpus extraction.
+Keep both snapshot artifacts outside Git.
+
+## Select A Metadata-Only EXE Pilot
+
+```bash
+uv run --locked malweave data select-sorel-pilot \
+  --sources data/processed/sorel-20m/sources.csv \
+  --snapshot reports/sorel-20m/sources-snapshot.json \
+  --manifest data/processed/sorel-20m/pilot-10000.csv \
+  --summary reports/sorel-20m/pilot-10000.json \
+  --count 10000 --seed sorel-exe-pilot-v1
+```
+
+Selection verifies the frozen manifest digest and aggregates, then ranks every object by
+SHA-256 of the UTF-8 seed, a NUL byte, and the UTF-8 object key. It retains the lowest ranks
+with bounded memory. Increasing the count with the same seed and snapshot preserves the
+smaller selection as a prefix. New output paths are required; existing outputs are refused.
+
+The private CSV includes selection order, original source ID, bucket, key, compressed size,
+ETag, last-modified, and snapshot identity. The report records seed, algorithm, input identity,
+output digest, and selected compressed bytes. No size or label filtering is applied and no
+sample bytes are read. Architecture, packing, and EXE eligibility remain unverified. Later
+pilot processing must retain failed selections rather than substitute other sources. This
+is a feasibility pilot, not a benchmark split or the final paper cohort.
+
+## Audit 1,000 Pilot Metadata Records
+
+After obtaining a complete local `meta.db`, join the first 1,000 ranked sources from the
+existing pilot without downloading or inspecting malware bytes:
+
+```bash
+uv run --locked malweave data audit-sorel-metadata \
+  --pilot data/processed/sorel-20m/pilot-10000.csv \
+  --pilot-summary reports/sorel-20m/pilot-10000.json \
+  --metadata data/processed/sorel-20m/meta.db \
+  --output data/processed/sorel-20m/metadata-audit-1000.csv \
+  --summary reports/sorel-20m/metadata-audit-1000.json \
+  --count 1000
+```
+
+The command verifies pilot provenance, SQLite integrity and required schema, then performs
+indexed read-only joins on original source SHA-256. It retains every selected source,
+including missing, duplicate and invalid metadata records. The private UTF-8 CSV contains
+listing fields, binary labels, first-seen times, detection counts, all eleven raw tag counts,
+nonzero tag indicators, audit issues and documented temporal partition assignments.
+Null values stay empty; they are not converted to zero. Counts remain vendor-derived counts,
+and the packed tag does not identify a packer. Family, general obfuscation and PE-content
+fields are not fabricated. The summary reports join failures, label/split distributions,
+tag nonzero counts, input/output digests and runtime. A partial download is not a usable
+metadata database; schema/integrity failures produce no CSV. This is a bounded feasibility
+audit, not a paper cohort, feature-LMDB audit or full-corpus extraction authorization.
+
+Outputs must be new paths. Exit codes: 0 for all selected records passing, 1 for retained
+record-level failures, and 2 for input/database errors. Keep all generated artifacts out of Git.
+
+## Static Assessment Of A SOREL Pilot
+
+The full-filter assessment checks vendor `packed=0` before download, then requires successful
+`file` output containing `PE32 executable` before running DiE. Non-PE32 results are retained as
+`excluded_not_pe32`, with DiE `not_run` rather than a negative detection. This is a PE32 format
+proxy inspired by RawByteClf's `run/prepareOtherDatasets.sh`, not independent x86 verification
+or proof of the exact SOREL selection used in the paper. Existing checkpoint rows remain reusable;
+the same eligibility conditions are applied again at final export, without repeating completed scans.
+
+The LMLM paper selected 32-bit x86 PE files with the `file` utility, used Detect It Easy (`diec`)
+to exclude encrypted/compressed samples, and represented code as concatenated executable sections.
+SOREL binaries are zlib-compressed and disarmed: `FileHeader.Machine` and
+`OptionalHeader.Subsystem` are set to zero. Consequently, architecture detection can be unknown;
+never restore these fields or infer x86 from the `packed` metadata tag. Keep vendor `packed` counts
+and static DiE results as separate columns. This dataset-specific limitation is a protocol
+divergence and must be recorded in any experiment config and results.
+
+Install the official Detect It Easy package for the worker's Linux distribution and verify that
+`diec --version` succeeds. Then assess the first 1,000 rows of the metadata audit:
+
+```bash
+uv run --locked malweave data assess-sorel-pilot \
+  --input data/processed/sorel-20m/metadata-audit-1000.csv \
+  --input-summary reports/sorel-20m/metadata-audit-1000.json \
+  --output data/processed/sorel-20m/static-assessment-1000.csv \
+  --summary reports/sorel-20m/static-assessment-1000.json \
+  --state-db data/processed/sorel-20m/static-assessment-1000.sqlite \
+  --count 1000
+```
+
+The command fetches each selected object only after checking its ETag, applies per-object
+compressed/decompressed-size bounds, decompresses to a temporary file, runs `file` and the three
+DiE modes (recursive, deep, heuristic), and removes the temporary file. It never executes samples.
+SQLite state commits each result; after interruption, rerun the same command with `--resume`.
+The per-sample CSV retains download/decompression/tool errors, byte counts, a digest of the
+released disarmed bytes, architecture status, DiE detections, SOREL's original `packed` count,
+and a paper-cohort candidate status. `eligible_candidate` requires detected i386 plus all DiE
+modes completing with no recognized obfuscation type. Unknown architecture or incomplete scans
+remain unknown, not eligible. A candidate is not yet a complete EXE representation: executable
+sections still need extraction and digest validation. Outputs contain private sample identities
+and must remain outside Git. The JSON summary reports aggregate statuses and limits only.
+
+The S3 source objects are not version-pinned. `If-Match` checks the listed ETag during each read;
+if an object changed, the attempt is recorded as failed. This assessment is a 1,000-sample
+feasibility pass, not permission to process the full corpus.

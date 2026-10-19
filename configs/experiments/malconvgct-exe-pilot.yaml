@@ -1,0 +1,38 @@
+experiment:
+  dataset: rands
+  kind: feasibility
+  name: malconvgct-exe-bytes-pilot
+  divergences:
+    - EXE section bytes instead of RAW PE bytes; no BPE and no pretraining.
+    - Local available subset, not a random sample of the full release.
+    - Exact consumed-prefix deduplication; no temporal or family isolation claim.
+    - Source identities inferred from extraction filenames; raw provenance not reverified.
+cohort:
+  max_local_fi
+  les: 2000
+split:
+  seed: "17"
+  fractions: {train: 0.7, validation: 0.15, test: 0.15}
+inputs:
+  exe:
+    truncation: {max_bytes: 1048576}
+    short_inputs: right_pad_to_minimum_chunk_with_zero_ids
+tracks:
+  malconvgct:
+    representation: exe
+    architecture:
+      vocab_size: 257
+      embedding_size: 8
+      channels: 256
+      kernel_size: 256
+      stride: 64
+      layers: 1
+      pad_token_id: 0
+      num_labels: 2
+      chunk_size: 65536
+      min_chunk_size: 1024
+    training:
+      epochs: 5
+      precision: fp32
+      optimizer: {learning_rate: 0.001, weight_decay: 0.01}
+      scheduler: {warmup_ratio: 0.05, max_grad_norm: 1.0}

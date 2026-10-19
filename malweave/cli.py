@@ -45,6 +45,15 @@ from malweave.data.s3.inventory import S3InventoryError, inventory_s3_prefix, va
 from malweave.data.s3.rands import RandsS3Error, inventory_rands_s3
 from malweave.data.s3.rands_metadata import prepare_rands_metadata
 from malweave.data.s3.relay import RelayError
+from malweave.data.s3.sorel_filter_assessment import filter_sorel_assessment
+from malweave.data.s3.sorel_full_filter import (
+    assess_sorel_full_candidates,
+    prepare_sorel_packed_candidates,
+)
+from malweave.data.s3.sorel_metadata_audit import audit_sorel_metadata
+from malweave.data.s3.sorel_pe_assessment import assess_sorel_pilot
+from malweave.data.s3.sorel_pilot import select_sorel_pilot
+from malweave.data.s3.sorel_sources import freeze_sorel_sources
 from malweave.experiments.rands_comparison import (
     RandsComparisonError,
     build_rands_comparison_cohort,
@@ -311,6 +320,89 @@ def _parser() -> argparse.ArgumentParser:
     prepare_exe.add_argument("--manifest", type=Path)
     prepare_exe.add_argument("--summary", type=Path)
     prepare_exe.add_argument("--resume", action="store_true")
+
+    freeze_sorel = data_commands.add_parser(
+        "freeze-sorel-sources", help="Freeze verified SOREL listing metadata; no binary reads."
+    )
+    freeze_sorel.add_argument("--inventory", type=Path, required=True)
+    freeze_sorel.add_argument("--audit", type=Path, required=True)
+    freeze_sorel.add_argument("--manifest", type=Path, required=True)
+    freeze_sorel.add_argument("--summary", type=Path, required=True)
+
+    metadata_sorel = data_commands.add_parser(
+        "audit-sorel-metadata", help="Audit bounded pilot joins against local read-only meta.db."
+    )
+    metadata_sorel.add_argument("--pilot", type=Path, required=True)
+    metadata_sorel.add_argument("--pilot-summary", type=Path, required=True)
+    metadata_sorel.add_argument("--metadata", type=Path, required=True)
+    metadata_sorel.add_argument("--output", type=Path, required=True)
+    metadata_sorel.add_argument("--summary", type=Path, required=True)
+    metadata_sorel.add_argument("--count", type=int, default=1000)
+
+    assess_sorel = data_commands.add_parser(
+        "assess-sorel-pilot", help="Bounded static file/DiE assessment for a private SOREL pilot."
+    )
+    assess_sorel.add_argument("--input", type=Path, required=True)
+    assess_sorel.add_argument("--input-summary", type=Path, required=True)
+    assess_sorel.add_argument("--output", type=Path, required=True)
+    assess_sorel.add_argument("--summary", type=Path, required=True)
+    assess_sorel.add_argument("--state-db", type=Path, required=True)
+    assess_sorel.add_argument("--count", type=int, default=1000)
+    assess_sorel.add_argument("--resume", action="store_true")
+    assess_sorel.add_argument("--max-compressed-mb", type=int, default=300)
+    assess_sorel.add_argument("--max-decompressed-mb", type=int, default=1024)
+    assess_sorel.add_argument("--timeout-seconds", type=float, default=10.0)
+    assess_sorel.add_argument("--progress-every", type=int, default=10)
+
+    filter_sorel = data_commands.add_parser(
+        "filter-sorel-assessment",
+        help="Filter completed SOREL pilot by packed metadata and DiE obfuscation result.",
+    )
+    filter_sorel.add_argument("--input", type=Path, required=True)
+    filter_sorel.add_argument("--input-summary", type=Path, required=True)
+    filter_sorel.add_argument("--output", type=Path, required=True)
+    filter_sorel.add_argument("--summary", type=Path, required=True)
+
+    prepare_sorel_full = data_commands.add_parser(
+        "prepare-sorel-full-filter",
+        help="Audit all SOREL source metadata and select packed-count-zero objects.",
+    )
+    prepare_sorel_full.add_argument("--sources", type=Path, required=True)
+    prepare_sorel_full.add_argument("--snapshot-summary", type=Path, required=True)
+    prepare_sorel_full.add_argument("--metadata", type=Path, required=True)
+    prepare_sorel_full.add_argument("--pilot", type=Path, required=True)
+    prepare_sorel_full.add_argument("--pilot-summary", type=Path, required=True)
+    prepare_sorel_full.add_argument("--output", type=Path, required=True)
+    prepare_sorel_full.add_argument("--summary", type=Path, required=True)
+
+    assess_sorel_full = data_commands.add_parser(
+        "assess-sorel-full-filter",
+        help="Resumably scan all packed-zero SOREL objects from S3 and filter DiE detections.",
+    )
+    assess_sorel_full.add_argument("--input", type=Path, required=True)
+    assess_sorel_full.add_argument("--input-summary", type=Path, required=True)
+    assess_sorel_full.add_argument("--output", type=Path, required=True)
+    assess_sorel_full.add_argument("--summary", type=Path, required=True)
+    assess_sorel_full.add_argument("--state-db", type=Path, required=True)
+    assess_sorel_full.add_argument("--resume", action="store_true")
+    assess_sorel_full.add_argument(
+        "--count", type=int, help="Assess only the first N candidates in frozen manifest order."
+    )
+    assess_sorel_full.add_argument("--workers", type=int, default=4)
+    assess_sorel_full.add_argument("--max-compressed-mb", type=int, default=1024)
+    assess_sorel_full.add_argument("--max-decompressed-mb", type=int, default=2048)
+    assess_sorel_full.add_argument("--timeout-seconds", type=float, default=10.0)
+    assess_sorel_full.add_argument("--progress-every", type=int, default=1000)
+
+    pilot_sorel = data_commands.add_parser(
+        "select-sorel-pilot", help="Select seeded pilot metadata from a frozen SOREL snapshot."
+    )
+    pilot_sorel.add_argument("--sources", type=Path, required=True)
+    pilot_sorel.add_argument("--snapshot", type=Path, required=True)
+    pilot_sorel.add_argument("--manifest", type=Path, required=True)
+    pilot_sorel.add_argument("--summary", type=Path, required=True)
+    pilot_sorel.add_argument("--count", type=int, default=10000)
+    pilot_sorel.add_argument("--seed", default="sorel-exe-pilot-v1")
 
     inspect = data_commands.add_parser("inspect", help="Audit a local dataset without mutation.")
     inspect.add_argument("--dataset", choices=("rands",), required=True)
@@ -915,6 +1007,89 @@ def main(argv: Sequence[str] | None = None) -> int:
                 workers=args.workers,
                 reuse_root=reuse_root,
             )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "data" and args.data_command == "audit-sorel-metadata":
+            try:
+                summary = audit_sorel_metadata(
+                    args.pilot,
+                    args.pilot_summary,
+                    args.metadata,
+                    args.output,
+                    args.summary,
+                    count=args.count,
+                )
+            except (ValueError, KeyError, TypeError) as error:
+                raise S3InventoryError(str(error)) from error
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0 if summary["passed"] else 1
+        if args.command == "data" and args.data_command == "assess-sorel-pilot":
+            summary = assess_sorel_pilot(
+                args.input,
+                args.input_summary,
+                args.output,
+                args.summary,
+                args.state_db,
+                count=args.count,
+                resume=args.resume,
+                max_compressed_bytes=args.max_compressed_mb * 1024 * 1024,
+                max_decompressed_bytes=args.max_decompressed_mb * 1024 * 1024,
+                timeout_seconds=args.timeout_seconds,
+                progress_every=args.progress_every,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "data" and args.data_command == "filter-sorel-assessment":
+            summary = filter_sorel_assessment(
+                input_path=args.input,
+                input_summary_path=args.input_summary,
+                output_path=args.output,
+                summary_path=args.summary,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "data" and args.data_command == "prepare-sorel-full-filter":
+            summary = prepare_sorel_packed_candidates(
+                args.sources,
+                args.snapshot_summary,
+                args.metadata,
+                args.pilot,
+                args.pilot_summary,
+                args.output,
+                args.summary,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "data" and args.data_command == "assess-sorel-full-filter":
+            summary = assess_sorel_full_candidates(
+                args.input,
+                args.input_summary,
+                args.output,
+                args.summary,
+                args.state_db,
+                resume=args.resume,
+                count=args.count,
+                workers=args.workers,
+                max_compressed_bytes=args.max_compressed_mb * 1024 * 1024,
+                max_decompressed_bytes=args.max_decompressed_mb * 1024 * 1024,
+                timeout_seconds=args.timeout_seconds,
+                progress_every=args.progress_every,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "data" and args.data_command == "select-sorel-pilot":
+            summary = select_sorel_pilot(
+                args.sources,
+                args.snapshot,
+                args.manifest,
+                args.summary,
+                count=args.count,
+                seed=args.seed,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if args.command == "data" and args.data_command == "freeze-sorel-sources":
+            summary = freeze_sorel_sources(args.inventory, args.audit, args.manifest, args.summary)
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
         if args.command == "data" and args.data_command == "inspect":
