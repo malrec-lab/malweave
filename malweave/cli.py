@@ -15,7 +15,21 @@ import yaml
 
 from malweave.config import CONFIGS_DIR, PROJECT_ROOT
 from malweave.data.dataset_config import DatasetConfigError, load_rands_dataset_config
-from malweave.data.rands import RandsDataError, inspect_rands, write_rands_manifest
+from malweave.data.family_coverage import (
+    FamilyCoverageError,
+    read_predictions,
+    read_split_manifest,
+    reference_families,
+    resolve_families,
+    seen_unseen_metric_breakdown,
+    summarize_family_coverage,
+)
+from malweave.data.rands import (
+    RandsDataError,
+    inspect_rands,
+    load_rands_metadata,
+    write_rands_manifest,
+)
 from malweave.data.rands_exe import (
     RandsExeError,
     exe_console_summary,
@@ -339,6 +353,36 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional local CSV inventory containing sample hashes; never commit it.",
+    )
+
+    family_coverage = data_commands.add_parser(
+        "family-coverage",
+        help="Report family overlap between frozen splits without printing sample hashes.",
+    )
+    family_coverage.add_argument(
+        "--manifest", type=Path, required=True, help="Frozen split CSV to analyze."
+    )
+    family_coverage.add_argument("--config", type=Path, default=DEFAULT_RANDS_CONFIG)
+    family_coverage.add_argument(
+        "--metadata-root",
+        type=Path,
+        default=None,
+        help="Directory with Benign.csv/Ransomware.csv when the manifest omits family labels.",
+    )
+    family_coverage.add_argument(
+        "--reference-split", choices=("train", "validation", "test"), default="train"
+    )
+    family_coverage.add_argument(
+        "--predictions",
+        type=Path,
+        default=None,
+        help="Optional test-predictions.csv to split metrics by seen/unseen family.",
+    )
+    family_coverage.add_argument(
+        "--summary",
+        type=Path,
+        default=None,
+        help="Optional aggregate JSON output; contains family names but no sample hashes.",
     )
 
     extract_exe = data_commands.add_parser(
@@ -932,6 +976,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.manifest is not None:
                 write_rands_manifest(args.manifest, config, metadata, present_shas)
             return 0 if summary["contract"]["passed"] else 1
+        if args.command == "data" and args.data_command == "family-coverage":
+            rows = read_split_manifest(args.manifest)
+            lookup: dict[str, str] | None = None
+            if args.metadata_root is not None:
+                metadata = load_rands_metadata(
+                    load_rands_dataset_config(args.config), args.metadata_root
+                )
+                lookup = {
+                    source: record.family
+                    for source, record in metadata.records.items()
+                    if record.family
+                }
+            elif not any((row.get("family") or "").strip() for row in rows):
+                raise FamilyCoverageError(
+                    "This manifest omits family labels; supply --metadata-root with the "
+                    "RanDS Benign.csv and Ransomware.csv."
+                )
+            report = summarize_family_coverage(
+                rows, family_lookup=lookup, reference_split=args.reference_split
+            )
+            if args.predictions is not None:
+                families = resolve_families(rows, lookup)
+                reference = reference_families(rows, families, args.reference_split)
+                report["metric_breakdown"] = seen_unseen_metric_breakdown(
+                    read_predictions(args.predictions), families, reference
+                )
+            rendered = json.dumps(report, indent=2, sort_keys=True)
+            print(rendered)
+            if args.summary is not None:
+                args.summary.parent.mkdir(parents=True, exist_ok=True)
+                args.summary.write_text(rendered + "\n", encoding="utf-8")
+            return 0
         if args.command == "data" and args.data_command == "extract-exe":
             dataset_config = load_rands_dataset_config(args.config)
             locations = dataset_config.resolve_locations(args.root, args.metadata_root)
@@ -1140,6 +1216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 130
     except (
         DatasetConfigError,
+        FamilyCoverageError,
         RandsDataError,
         RandsExeError,
         RandsGhidraError,

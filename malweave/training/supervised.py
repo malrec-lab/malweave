@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 import csv
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 import math
@@ -165,6 +166,45 @@ def _select_threshold(probabilities: list[float], labels: list[int]) -> float:
             -value,
         ),
     )
+
+
+@dataclass
+class _EarlyStopping:
+    """Track the best validation value and how long it has been stale."""
+
+    patience: int
+    min_delta: float = 0.0
+    best: float = float("-inf")
+    best_epoch: int = 0
+    stale_epochs: int = 0
+
+    def update(self, value: float, epoch: int) -> bool:
+        """Record one epoch; return True when it is a new (meaningful) best."""
+        if value > self.best + self.min_delta:
+            self.best = value
+            self.best_epoch = epoch
+            self.stale_epochs = 0
+            return True
+        self.stale_epochs += 1
+        return False
+
+    @property
+    def should_stop(self) -> bool:
+        return self.patience > 0 and self.stale_epochs >= self.patience
+
+
+def _early_stopping(training: dict[str, Any]) -> _EarlyStopping:
+    """Parse early-stopping settings; patience 0 disables it (train every epoch)."""
+    settings = training.get("early_stopping") or {}
+    if not isinstance(settings, dict):
+        raise SupervisedTrainingError("training.early_stopping must be a mapping.")
+    patience = settings.get("patience", 0)
+    min_delta = settings.get("min_delta", 0.0)
+    if isinstance(patience, bool) or not isinstance(patience, int) or patience < 0:
+        raise SupervisedTrainingError("early_stopping.patience must be a non-negative integer.")
+    if isinstance(min_delta, bool) or not isinstance(min_delta, (int, float)) or min_delta < 0:
+        raise SupervisedTrainingError("early_stopping.min_delta must be a non-negative number.")
+    return _EarlyStopping(patience=patience, min_delta=float(min_delta))
 
 
 class _SupervisedDataset(Dataset[tuple[Tensor, int]]):
@@ -459,6 +499,8 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     started = time.perf_counter()
     best_auc = float("-inf")
     best_threshold = 0.5
+    stopper = _early_stopping(training)
+    epochs_ran = 0
     history: list[dict[str, Any]] = []
     optimizer.zero_grad()
     update = 0
@@ -514,6 +556,8 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                 "Validation split lacks both labels; ROC-AUC selection is impossible."
             )
         threshold = _select_threshold(probabilities, labels)
+        improved = stopper.update(validation_auc, epoch)
+        epochs_ran = epoch
         history.append(
             {
                 "epoch": epoch,
@@ -521,13 +565,20 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                 "validation_loss": validation_loss,
                 "validation_roc_auc": validation_auc,
                 "validation_threshold": threshold,
+                "epochs_without_improvement": stopper.stale_epochs,
             }
         )
-        if validation_auc > best_auc:
+        if improved:
             best_auc = validation_auc
             best_threshold = threshold
             torch.save({"model": model.state_dict(), "epoch": epoch}, run_dir / "best.pt")
         _progress(f"epoch={epoch}/{epochs} phase=complete validation_roc_auc={validation_auc:.4f}")
+        if stopper.should_stop:
+            _progress(
+                f"epoch={epoch}/{epochs} phase=early-stop "
+                f"best_epoch={stopper.best_epoch} stale_epochs={stopper.stale_epochs}"
+            )
+            break
     checkpoint = torch.load(run_dir / "best.pt", map_location=device, weights_only=True)
     model.load_state_dict(checkpoint["model"])
     _progress("phase=test")
@@ -564,6 +615,11 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     metrics = {
         "selection": {
             "checkpoint_epoch": checkpoint["epoch"],
+            "best_epoch": stopper.best_epoch,
+            "epochs_ran": epochs_ran,
+            "early_stopped": stopper.should_stop,
+            "patience": stopper.patience,
+            "min_delta": stopper.min_delta,
             "validation_roc_auc": best_auc,
             "threshold": best_threshold,
         },
@@ -600,6 +656,13 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         "seed": request.seed,
         "command": request.command,
         "gradient_accumulation_steps": request.gradient_accumulation_steps,
+        "epochs_configured": epochs,
+        "epochs_ran": epochs_ran,
+        "early_stopping": {
+            "patience": stopper.patience,
+            "min_delta": stopper.min_delta,
+            "early_stopped": stopper.should_stop,
+        },
         "split_counts": dict(sorted(Counter(row.split for row in examples).items())),
         "source": source.summary(),
         "artifacts": {

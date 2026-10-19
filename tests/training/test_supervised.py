@@ -15,6 +15,8 @@ from malweave.training.stage import StageError, stage_manifest_from_s3
 from malweave.training.supervised import (
     SupervisedRunRequest,
     SupervisedTrainingError,
+    _early_stopping,
+    _EarlyStopping,
     run_supervised_training,
 )
 
@@ -116,6 +118,9 @@ def test_supervised_runner_writes_private_checkpoint_metrics_and_manifest(
     assert result["metrics"]["test"]["roc_auc"] is not None
     assert result["manifest"]["tokenizer_sha256"] is None
     assert result["manifest"]["seed"] == 17
+    assert result["metrics"]["selection"]["epochs_ran"] == 2
+    assert result["metrics"]["selection"]["early_stopped"] is False
+    assert result["manifest"]["epochs_configured"] == 2
     progress = capsys.readouterr().err
     assert "train: preparing track=malconvgct device=cpu train=2 validation=2 test=2" in progress
     assert "epoch=1/2 phase=train batches=2/2" in progress
@@ -300,3 +305,36 @@ def test_malconvgct_exe_run_reuses_byte_adapter_and_training_loop(tmp_path: Path
     assert result["metrics"]["test"]["roc_auc"] is not None
     assert (run_dir / "best.pt").is_file()
     assert not (run_dir / "tokenizer.json").exists()
+
+
+def test_early_stopping_tracks_best_epoch_and_patience() -> None:
+    stopper = _EarlyStopping(patience=2, min_delta=0.0)
+    assert stopper.update(0.90, 1) is True
+    assert stopper.best_epoch == 1
+    assert stopper.should_stop is False
+    assert stopper.update(0.80, 2) is False
+    assert stopper.should_stop is False
+    assert stopper.update(0.85, 3) is False
+    assert stopper.should_stop is True
+    assert stopper.best == pytest.approx(0.90)
+    assert stopper.best_epoch == 1
+
+
+def test_early_stopping_min_delta_ignores_small_gains() -> None:
+    stopper = _EarlyStopping(patience=1, min_delta=0.01)
+    assert stopper.update(0.90, 1) is True
+    assert stopper.update(0.905, 2) is False  # smaller than min_delta
+    assert stopper.should_stop is True
+
+
+def test_early_stopping_is_disabled_by_default_and_validated() -> None:
+    assert _early_stopping({}).patience == 0
+    enabled = _early_stopping({"early_stopping": {"patience": 5, "min_delta": 0.01}})
+    assert enabled.patience == 5
+    assert enabled.min_delta == pytest.approx(0.01)
+    with pytest.raises(SupervisedTrainingError, match="patience"):
+        _early_stopping({"early_stopping": {"patience": -1}})
+    with pytest.raises(SupervisedTrainingError, match="patience"):
+        _early_stopping({"early_stopping": {"patience": True}})
+    with pytest.raises(SupervisedTrainingError, match="min_delta"):
+        _early_stopping({"early_stopping": {"min_delta": -0.1}})

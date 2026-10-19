@@ -69,7 +69,8 @@ tracks:
       chunk_size: 65536
       min_chunk_size: 1024
     training:
-      epochs: 1
+      epochs: 30
+      early_stopping: {patience: 5, min_delta: 0.001}
       precision: fp32
       optimizer: {learning_rate: 0.001, weight_decay: 0.01}
       scheduler: {warmup_ratio: 0.05, max_grad_norm: 1.0}
