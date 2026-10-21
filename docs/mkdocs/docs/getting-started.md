@@ -20,7 +20,7 @@ Start with the [research protocol](workflows/research-protocol.md),
 [data preparation](workflows/data-preparation.md) and [workstreams](workflows/research-workstreams.md).
 
 **RanDS has been converted to EXE and uploaded to S3.** The next data tasks are SOREL/Assemblage
-adapters and pilots, followed by cross-source overlap checks and experiment-view preparation.
+selection, readers and conversion, followed by cross-source overlap checks and experiment-view preparation.
 Read the [dataset cards](datasets/index.md) for source-specific schemas and identity rules.
 
 Private data, metadata, inventories, EXE bytes and checkpoints stay outside Git. Configure

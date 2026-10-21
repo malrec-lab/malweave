@@ -1,0 +1,17 @@
+# Pilot annotation differs from LMLM's strict x86-32 collection filter.
+release: 09-DEC-2020
+seed: 42
+samples: 1000
+batch_size: 20
+workers: 20
+architecture_policy: annotate
+packing_policy: exclude_detected_and_unknown
+max_compressed_bytes: 33554432
+max_pe_bytes: 134217728
+min_free_bytes: 5368709120
+file_timeout_seconds: 10
+die_timeout_seconds: 15
+lief_timeout_seconds: 60
+download_backend: curl
+request_timeout_seconds: 120
+request_attempts: 3

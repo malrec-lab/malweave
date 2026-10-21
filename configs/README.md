@@ -11,5 +11,10 @@ inventories.
 
 Define external-pretraining and EXE downstream configs using the
 [research protocol](../docs/mkdocs/docs/workflows/research-protocol.md). Configs record source
-scope, input manifests, model/tokenizer settings and evaluation choices. SOREL/Assemblage
-adapters and the EXE-only runner interface are implementation tasks.
+scope, input manifests, model/tokenizer settings and evaluation choices.
+`datasets/sorel-pilot.yaml` is a development smoke-test config, not the pretraining corpus scope.
+For corpus preparation, use an explicit reviewed config and a separate job directory; see
+[data preparation](../docs/mkdocs/docs/workflows/data-preparation.md).
+`data sorel-run` prepares and processes batches continuously; repeat it to resume the same job.
+The config controls workers/batch and size limits, per-tool deadlines, downloader and retries.
+The Assemblage adapter and EXE-only runner interface are implementation tasks.

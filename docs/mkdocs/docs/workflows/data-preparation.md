@@ -1,130 +1,178 @@
 # Prepare SOREL And Assemblage EXE Data
 
 Prepare SOREL malware and Assemblage Windows PE for pretraining. **RanDS is converted to EXE and
-uploaded to S3** and supplies downstream data plus overlap checks. This is a preparation plan;
-measurements and execution notes will be recorded after the jobs run.
+uploaded to S3** and supplies downstream data plus overlap checks.
 
 ```text
-SOREL metadata → selected S3 binaries → zlib decompress ─┐
-                                                       ├→ shared EXE extractor
+SOREL metadata → selected S3 batches → zlib decompress ─┐
+                                                       ├→ PE screening → shared EXE extractor
 Assemblage SQLite + binaries.tar.xz → selected PE bytes ┘
-    → pilot both sources → choose scope → convert → check overlap → split-ready inputs
+    → quality and overlap checks → split-ready inputs
 ```
 
-## 1. Inputs
+## 1. SOREL
 
-| Source | Selected release | Required data |
-| --- | --- | --- |
-| SOREL | `s3://sorel-20m/09-DEC-2020/` | `processed-data/meta.db` and selected objects under `binaries/`. |
-| Assemblage | `changliu8541/Assemblage_PE`, revision `19a8f947f5a04d03edea78e61790226b55f92ac2` | `winpe.sqlite.tar.xz` and `binaries.tar.xz`. |
-| RanDS | Prepared EXE dataset | EXE/source mapping, labels/families and extraction status. |
+Use `s3://sorel-20m/09-DEC-2020/`. The bucket is public; no AWS credentials are needed.
 
-SOREL has no public raw benign binaries. Assemblage is background software from licensed source
-repositories, not AV-certified benign ground truth. MLM does not use these class labels as targets.
+1. Download `processed-data/meta.db` (about **3.8 GB**, 3.53 GiB). Audit SQLite integrity, schema,
+   labels and IDs. Select malware rows; raw benign binaries are not public. EMBER features and
+   baseline models are not required for EXE.
+2. Choose the corpus scope and filtering policy, retaining a fixed source list and sampling seed
+   when applicable. Resolve architecture handling before corpus conversion: SOREL zeroes `Machine`
+   and `Subsystem`, and PE32 alone does not prove x86. Do not restore headers. Document deviations
+   from LMLM's x86-32 cohort.
+3. Read selected `binaries/<original-ID>` objects in bounded batches, decompress zlib, screen and
+   extract EXE. Remove temporary inputs after durable outcomes. Bound file sizes and concurrency;
+   the full raw corpus is not required locally.
+4. Retain per-source progress, EXE and explicit filtered/error outcomes. Retry network failures;
+   do not silently replace missing or malformed sources. Keep original ID, released-PE digest and
+   EXE digest separate because released bytes differ from the original hashed file.
 
-## 2. SOREL: Metadata, Selection And Reader
+SOREL metadata has been audited; corpus conversion is pending. See the
+[SOREL dataset card](../datasets/sorel-20m.md) for audited counts and source details.
 
-1. Download `processed-data/meta.db` (about **3.8 GB**, 3.53 GiB) and inspect the SQLite `meta` table.
-   Select 100 records with `is_malware = 1`, using a fixed seed, and save the selected IDs privately.
-   EMBER features, full PE metadata dumps and baseline models are not needed for this pipeline.
-2. Read each selected `binaries/<original-ID>` object anonymously from S3. Objects have the original
-   SHA-256 filename without an extension. Decompress zlib in memory, then pass PE bytes to LIEF.
-   Each worker handles bounded per-file data; the full roughly 8 TB corpus is not required locally.
-3. Implement request retry, per-source progress and explicit read/decompression/missing failures.
-   Do not replace failed sources silently. Keep original ID, decompressed-byte digest and EXE digest
-   separate: the release sets `Machine` and `Subsystem` to zero, so released bytes do not need to
-   hash to the original filename. Do not restore headers.
+### CLI And Job State
 
-**Required output:** the selected source list and a reader that can produce PE bytes or an explicit
-failure for every selected source. The SOREL CLI adapter still needs implementation.
+Use one command to prepare a new job and process successive batches:
 
-## 3. Assemblage: Metadata, Archive And Reader
+```bash
+uv run --locked python -m malweave data sorel-run \
+  --metadata data/raw/sorel/metadata/meta.db \
+  --config <reviewed-config.yaml> --job-dir <new-job>
+```
 
-Use the **GitHub Windows PE** release, not Linux ELF, Rust, vcpkg or DeepHistory. Pin both downloads
-to the revision above.
+Resume with the same command, config and job directory; `--metadata` can be omitted after
+preparation. The existing default config is a development smoke test; pass an explicit config for
+corpus work. `--limit N` stops after at most N additional sources in this invocation. The CLI does
+not upload outputs.
 
-| Published file | Compressed size | Purpose |
+The source selection and per-source outcomes live in SQLite. `selection.json` records the config,
+metadata audit and selection digest. Indexed pending rows and transactional counters avoid reading
+all previous outcomes every batch. Each outcome, completed flag, aggregate delta and unique EXE
+accounting commit together. Remove compressed input only after that commit. One writer is allowed
+per job. If interrupted, committed sources are skipped; verified pending downloads are reused.
+Uncommitted screening/extraction may run again. Stop with Ctrl-C and allow bounded in-flight work
+to finish before restarting.
+
+The default downloader is curl >= 7.70; `download_backend: urllib` is also available. Each attempt
+has a durable JSON log with HTTP status, retries, observed bytes, duration, command and diagnostics
+under `downloads/`. A start record preserves evidence if the process dies during transfer;
+recovered interrupted attempts mark duration unknown and byte counts as lower bounds. Transient
+failures retry within `request_attempts`; missing/forbidden objects and size limits are accounted
+separately. Exhausted source failures are terminal outcomes; resuming does not retry completed
+failures. Storage write errors stop the runner and preserve pending state.
+
+Changed configs, inputs, code or tool identities require a new job. Schema-1 jobs are export-only.
+Resume checks selection and the frozen contract once, then checks each newly produced result.
+For a full audit of saved reports, download history, progress and EXE hashes, run:
+
+```bash
+uv run --locked python -m malweave data sorel-verify --job-dir <job>
+```
+
+### Saved Tool Evidence And Statistics
+
+Each new SOREL outcome links to hash-checked JSON under `tool-reports/<tool>/<shard>/<source>.json`:
+
+| Tool | Saved evidence |
+| --- | --- |
+| `file` | Command, stdout, stderr, return code or timeout/error, runtime and binary identity. |
+| DiE | Original stdout/stderr, parsed complete JSON, status/runtime/command for recursive, deep and heuristic modes; binary/rule identity. Includes compiler/linker/packer names and all other returned fields. |
+| LIEF 0.15.1 | Structured `lief.to_json` PE data, every section's raw/virtual offsets, sizes and flags, selection, effective extraction ranges, output offsets, warnings and EXE digest. An isolated subprocess captures native stdout/stderr, command, runtime and exit status. Timeouts (`lief_timeout_seconds`) and worker crashes are per-source failures; other sources continue. |
+
+Reports retain source ID, released-PE hash, tool version and timestamp. Save screening evidence
+before filtering; LIEF is not run for samples rejected before extraction. Missing inputs and failed
+stages are recorded without pretending subsequent tools ran. Keep original metadata databases.
+
+Update `summary.json` after each batch. Once all selected sources are accounted for, automatically
+export `manifest.json`, `results.csv`, `tool-runs.csv`, `die-detections.csv`, `lief-sections.csv`,
+`downloads.csv` and `export-summary.json`. Export streams saved rows instead of loading the entire
+history into memory. CSVs use UTF-8 with BOM for Excel; these are CSV files, not an XLSX workbook.
+JSON remains the full evidence when nested data or long scanner output does not fit a spreadsheet
+cell. Network-byte/time totals come from receipts; interrupted transfers explicitly mark incomplete
+measurement. Summed worker durations are not elapsed job time.
+
+To regenerate tables from saved state only:
+
+```bash
+uv run --locked python -m malweave data sorel-export --job-dir <job>
+```
+
+Stop the runner before exporting an unfinished job. This command does not download or scan PEs
+and does not require the original tool environment.
+Historical jobs without full reports are exported with `full_report_not_saved`; unattempted stages
+are `not_run`. The earlier SOREL test retained summaries only, so its full DiE/LIEF evidence cannot
+be recovered through export. Existing jobs remain unchanged; the updated audit code requires a new
+processing job because code identity is part of the resume contract.
+
+The older manual path remains available: `data sorel-download-plan --config <config> --job-dir <job>`,
+`curl -sS --config <job>/download.curl`, then
+`data sorel-extract --config <config> --job-dir <job> --staged`. It processes one staged batch;
+repeat only while sources remain. It does not retain automatic per-attempt HTTP receipts, and
+local spool-read time is not network time. Prefer `sorel-run` for audited transfers. Sandboxed
+environments may restrict subprocess networking as well as Python networking.
+
+## 2. Assemblage Windows PE
+
+Use [changliu8541/Assemblage_PE](https://huggingface.co/datasets/changliu8541/Assemblage_PE/tree/19a8f947f5a04d03edea78e61790226b55f92ac2),
+revision `19a8f947f5a04d03edea78e61790226b55f92ac2`. Select GitHub Windows PE.
+
+| Required file | Compressed size | Purpose |
 | --- | ---: | --- |
 | `winpe.sqlite.tar.xz` | 9.32 GB | Binary/project/build metadata. |
-| `binaries.tar.xz` | 33.83 GB | PE bytes for EXE extraction. |
+| `binaries.tar.xz` | 33.83 GB | PE bytes. |
 
-The current file listing contains these two archives. The card mentions CSV files and
-`winpe_pdbs.sqlite.tar.xz`, but those filenames are not present at the selected revision. Use the
-actual listing. Do not combine the card's 91k and the project page's 88k counts as one release count.
+1. Download metadata first, extract its database and inspect it read-only. Use the actual schema
+   for binary ID, path/hash, project, license and build fields. Function/source/PDB tables are not
+   required. The selected revision contains the two archives above, not the CSVs mentioned by the card.
+2. Download the binary archive. Budget **43.15 GB** for compressed archives plus extracted metadata,
+   EXE and download cache. Match database paths to tar members, checking hashes when available;
+   report missing members. Count the selected release from its data rather than website totals.
+3. Choose source scope and retain project/build relations. Implement sequential regular-member
+   reads into the shared screening/extraction pipeline without unpacking all PEs to disk. Preserve
+   progress; rescanning compressed archives on resume must be included in runtime measurements.
 
-1. Download and inspect the metadata archive, extract the database and open it read-only. Inspect
-   `binaries` columns before querying. Read the binary ID, path/hash, size, repository/project,
-   license and build fields that actually exist. Function/PDB/source-code tables are not needed.
-2. Download `binaries.tar.xz` once. The two archives alone total **43.15 GB**; also budget for the
-   extracted database, EXE outputs and download cache. Measure the extracted sizes before scaling.
-3. Match the database path (`path` or `binary_path`, depending on schema) with tar member names,
-   using hashes as additional checks when available. Report missing matches explicitly.
-4. Choose roughly 100 binaries across projects/build settings with a saved seed/list. Read regular
-   file members sequentially from `tar.xz` and feed their bytes into the shared extractor. No full
-   PE extraction to disk is required. This archive is not independent per-PE S3 objects; selecting
-   100 PEs does not imply downloading only those 100 PEs.
-5. Keep project/build relations and source-repository licenses. On resume, a compressed archive may
-   need rescanning; skip completed extraction rows and include scan/decompression cost in timings.
+Assemblage provides background software from source repositories, not AV-certified benign labels.
+Retain repository licenses; the generator's MIT license does not cover every binary. MLM does not
+use these class labels as targets. The Assemblage adapter remains to be implemented.
+See its [dataset card](../datasets/assemblage.md).
 
-**Required output:** a selected source list, correct metadata-to-member mapping and an archive
-reader connected to the shared extractor. The Assemblage CLI adapter still needs implementation.
+## 3. Shared Screening, Extraction And Operation
 
-## 4. Shared Extractor And Two Pilots
+- Before extraction, annotate architecture with `file` and run DiE recursive, deep and heuristic
+  modes. Require valid PE reports from all modes with no detected obfuscation. Account for detected
+  and unknown results separately. SOREL's vendor `packed` tag does not replace DiE. LMLM filters
+  x86-32 before extraction; freeze and document this study's source-specific architecture policy.
+- Use `malweave/data/pe_sections.py` and locked **LIEF 0.15.1**. Concatenate raw ranges of sections
+  with `CODE` or `EXECUTE` flags in section-table order, clipping invalid ranges with warnings.
+  Preserve complete EXE; context truncation belongs to later model input processing.
+- Check readers, malformed/empty/no-code PEs, multiple sections, read/decompression failures,
+  output digests and resume using synthetic fixtures. Verify real outputs against recorded results.
+- Choose workers and output storage within available resources. Keep each job's inputs/config/tools
+  fixed, commit per-source outcomes durably and report counts, screening coverage, failures,
+  download/scan/screening/extraction time and storage. Retain outputs and state outside Git.
 
-Use `malweave/data/pe_sections.py` and locked **LIEF 0.15.1**. Concatenate raw ranges of sections with
-`CODE` or `EXECUTE` flags in section-table order, clipping invalid ranges and recording warnings.
-Preserve complete EXE bytes; context truncation belongs to later model input processing.
+## 4. Combined Checks And EXE Input Interface
 
-Add source configs, CLI integration, durable progress and synthetic tests for both readers.
-Cover malformed/empty/no-code PE, multiple sections, decompression/read failures, conflicting output
-digests and interruption/resume. Then process the two saved pilot lists.
-
-For **each source**, require:
-
-- An outcome for every attempted source and valid, hash-checked EXE output for every success.
-- Resume that preserves completed results and rejects conflicting output/changed job inputs.
-- Counts by failure reason, download/scan/decompression/extraction times and input/output size.
-- Architecture/packing summaries where available, with unknowns retained. SOREL's `Machine=0`
-  or PE32/PE32+ alone cannot establish ISA.
-
-These pilots validate code and resource needs, not detector quality.
-
-## 5. Choose Scope And Convert
-
-Estimate throughput and storage separately for the two sources. Include SOREL request overhead
-and Assemblage's fixed archive download/scan cost. Choose source counts, workers and output storage
-from the measured budget. Audit the full selected lists for metadata/path coverage and access
-conditions before launching a large job; freeze those lists and configs.
-
-Convert with per-source durable progress and explicit failures. Changed source lists/extraction
-contracts require distinct jobs. Group selected Assemblage work into one archive pass where possible.
-
-**Required output:** an accounted result for every chosen source, EXE outputs and per-source
-aggregate coverage/failure/runtime/size reports.
-
-## 6. Combined Checks And EXE Input Interface
-
-1. Normalize result fields: dataset/release, original ID, actual PE digest, EXE digest/path/size,
-   status/error, plus Assemblage project/build and RanDS label/family fields.
-2. Compare compatible original IDs and exact EXE hashes across sources. Exclude external
-   equivalents of RanDS from the pretraining list while retaining original source records and
-   exclusion reasons. Keep duplicate groups together for future splits; audit near duplicates
-   where feasible.
-3. Preserve Assemblage project groups for external train/validation. Declare the policy for RanDS's
-   73 conflicting-label EXE groups before downstream splits.
+1. Normalize fields: dataset/release, original ID, actual PE digest, EXE digest/path/size and
+   status/error, plus Assemblage project/build and RanDS label/family.
+2. Compare compatible original IDs and exact EXE hashes across sources. Exclude external equivalents
+   of RanDS from pretraining, preserving source records and exclusion reasons. Keep duplicate and
+   Assemblage project/build groups together in future splits. Audit near duplicates where feasible;
+   EXE-only preparation does not reproduce LMLM's DEC-based grouping.
+3. Declare a policy for RanDS's **73 conflicting-label EXE groups** before downstream splits.
 4. Report architecture/packing/unknown coverage by source and RanDS class to identify confounding.
-5. Implement EXE-only manifest/storage loading independent of RAW inputs. Validate paths, size and
-   trusted checksums; multipart S3 ETags are not SHA-256. Existing product/runner code also expects
-   RAW, so this interface is part of the work.
+5. Implement EXE-only manifest/storage loading independent of RAW. Validate paths, sizes and trusted
+   checksums; multipart S3 ETags are not SHA-256. Current product/runner code also expects RAW.
 
 ## Completion And Handoff
 
-Deliver EXE bytes, common result tables, resumable job state, source/project/duplicate/overlap
-relations, quality reports and a working EXE reader. Record release, acquisition/access terms,
-source/lock/tool versions and resolved commands/configs with private artifacts. Keep raw sources
-immutable and SQLite backups consistent.
+Both external sources must account for the selected scope, with verified EXE, common result tables,
+resumable state, quality reports, project/duplicate/overlap relations and a working EXE-only reader.
+Record release, terms, tool versions and resolved config with private artifacts. Keep raw bytes
+unchanged and SQLite backups consistent. Dataset inventories, per-sample hashes and credentials
+stay outside Git.
 
-The next stage selects cohorts, freezes splits and fits BPE on overlap-controlled external
-training data under the [research protocol](research-protocol.md). Synthetic model development can
-proceed while conversion runs. See the [dataset cards](../datasets/index.md) and
-[workstreams](research-workstreams.md) for source details and component tasks.
+The next stage freezes cohorts/splits and fits BPE on overlap-controlled external training data
+under the [research protocol](research-protocol.md). Synthetic model development can proceed while
+conversion runs. See [workstreams](research-workstreams.md) for component tasks.

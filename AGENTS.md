@@ -24,6 +24,11 @@
 - Split data before fitting tokenizers, normalizers, feature selectors, resampling, or tuning.
 - Prevent the same source or equivalent representation group from crossing data splits.
 - Report missing, malformed, filtered, and failed samples; never silently discard them.
+- Preserve per-source evidence from the LMLM tools (`file`, DiE recursive/deep/heuristic, LIEF):
+  command/output/error and tool identity, complete DiE reports, LIEF structured PE output and
+  section extraction ranges/warnings. Link reports by source/input/output digests and retain
+  evidence for rejected samples. Statistics and exports must be rebuildable without rescanning.
+  Mark missing historical evidence explicitly; never reconstruct it from summary claims.
 - Keep dataset-specific assumptions in committed config and dataset/workflow documentation.
 
 ## Implementation

@@ -14,7 +14,7 @@ span masking is the first planned extension.
 | Stage | Status as of 2026-10-18 |
 | --- | --- |
 | RanDS PE → EXE and storage | **Converted to EXE and uploaded to S3.** Extraction accounts for 215,404 sources: 215,040 successes and 364 failures. |
-| SOREL + Assemblage preparation | Implement source adapters, audit metadata and run bounded extraction pilots. |
+| SOREL + Assemblage preparation | SOREL metadata audited; architecture policy and corpus conversion pending. Assemblage reader and conversion pending. |
 | Tokenization and models | Byte/BPE utilities, classifiers and a supervised runner exist; MLM and transfer integration are next. |
 | Base experiment | Compare scratch vs pretrained at 10%, 25%, 100% RanDS training-label budgets. |
 | Method extension | Compare span masking against the completed random-token MLM baseline. |

@@ -32,8 +32,8 @@ obtain the binary archive using the same revision. The two compressed archives t
 allow additional space for unpacked metadata, EXE outputs and download-tool cache.
 
 `binaries.tar.xz` is a compressed tar archive, not individually downloadable PE objects. The plan
-uses one local archive download and sequential member reads. Selecting 100 PEs reduces the number
-of extractions, not necessarily archive download or scan time. Read regular member bytes without
+uses one local archive download and sequential member reads. Selecting a subset does not
+necessarily reduce archive download or scan time. Read regular member bytes without
 unpacking the complete PE tree to disk. Record archive-rescan costs when testing resume.
 
 ## Metadata And Mapping
@@ -50,7 +50,7 @@ needed for this EXE study.
 
 ## Sampling And Leakage
 
-Start with roughly 100 sources across projects/build settings. Keep the selected list and seed.
+Choose the processing scope across projects/build settings. Keep the selected list and sampling seed when applicable.
 Report missing members, malformed PEs and EXE failures. Multiple compiler/optimization variants
 of one project are related samples; keep the project together in external train/validation.
 Deduplicate exact EXE content, preserve source/project relations and check overlap with RanDS.

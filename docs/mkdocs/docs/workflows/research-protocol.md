@@ -33,6 +33,13 @@ the same architecture filter across sources inappropriate; PE32/PE32+ alone does
 RanDS architecture differs substantially by class, so report stratified coverage and performance.
 Ghidra, DIS/DEC, CFG and dynamic views are deferred.
 
+LMLM Section II-A filters x86-32 and removes packed/obfuscated binaries **before** extraction.
+The SOREL implementation screens with DiE recursive/deep/heuristic modes and excludes positive
+or incomplete results before producing EXE. Its initial `architecture_policy: annotate` measures
+coverage on disarmed PEs; it is not a faithful x86-32 cohort. Decide the architecture/cohort policy
+from architecture evidence before corpus conversion. Preserve RanDS's existing complete extraction and apply any
+future cohort policy through manifests. Do not substitute SOREL vendor tag counts for DiE results.
+
 ## Freeze Before Training
 
 1. Audit external-to-RanDS overlap using comparable original IDs and exact EXE digests; exclude

@@ -1,24 +1,35 @@
 # SOREL-20M Malware Dataset
 
 > Active role: registered malware PE subset for external self-supervised pretraining. Raw benign
-> binaries are not publicly released. Access examples below are reference material; select a bounded
-> pilot rather than downloading the full release. A MalWeave adapter is still to be implemented.
+> binaries are not publicly released. Read selected binaries in batches; the full raw corpus is not
+> required locally. See [data preparation](../workflows/data-preparation.md).
 
 ## Overview
 
-**SOREL-20M** (Sophos-ReversingLabs 20 Million) is a large benchmark for static Windows Portable Executable (PE) malware detection. Released by Sophos and ReversingLabs in December 2020, it provides nearly 20 million labelled PE records, pre-extracted EMBER v2 features, PE metadata, vendor-derived behavioral tags, baseline models, and approximately 9.92 million disarmed malware binaries.
+**SOREL-20M** (Sophos-ReversingLabs 20 Million) is a large benchmark for static Windows Portable Executable (PE) malware detection. Released by Sophos and ReversingLabs in December 2020, it provides nearly 20 million labelled PE records, pre-extracted EMBER v2 features, PE metadata, vendor-derived behavioral tags, baseline models, and roughly ten million disarmed malware binaries. An indexed malware row does not independently establish that its binary object remains available.
 
 It is suited to large-scale binary classification, multi-task learning with behavior-like tags, and time-aware evaluation. It is not a current threat feed: the data was collected from **2017-01-01 through 2019-04-10**.
 
 | Item | Quantity |
 | --- | ---: |
-| Total labelled PE records | 19,389,877 |
-| Malware records / disarmed malware binaries | 9,919,251 |
-| Benign records | 9,470,626 |
+| Full `meta.db` records, locally counted | 19,724,997 |
+| Malware metadata records | 9,962,820 |
+| Benign metadata records | 9,762,177 |
+| Records with EMBER features | 19,389,877 |
 | Raw benign binaries released | 0 |
 | Behavioral tag targets | 11 |
 
-The benchmark paper and the official `meta.db` index are authoritative for the exact local record count. The supplied class counts sum to 19,389,877; the paper describes the corpus as "nearly 20 million."
+Local audit on **2026-10-18** counted the complete 3,788,979,200-byte `meta.db`: SQLite quick-check
+passed, with no malformed or duplicate IDs. The official
+[missing-feature list](https://github.com/sophos-ai/SOREL-20M/blob/master/shas_missing_ember_features.json)
+contains **335,120** unique IDs, all matched against the local metadata: 291,551 benign and 43,569
+malware. Removing them gives **9,470,626 benign + 9,919,251 malware = 19,389,877 records**.
+Those feature-available counts must not be presented as the full metadata or a verified S3 binary
+inventory. EXE preparation does not require EMBER and does not exclude these IDs automatically.
+
+Static checks on released PEs did not establish ISA with `file`, consistent with the modified
+headers. Resolve the architecture policy before corpus conversion; PE32 alone does not establish
+x86. Some indexed binaries can return HTTP 404, so retain explicit missing-input outcomes.
 
 ## Access, License, and Safety
 

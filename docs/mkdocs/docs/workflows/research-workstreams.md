@@ -8,7 +8,7 @@ configured run. Follow the [research protocol](research-protocol.md) for the stu
 | Area | Current status | Next deliverable |
 | --- | --- | --- |
 | RanDS data | **Converted to EXE and uploaded to S3.** 215,404 sources accounted for; 215,040 successes, 364 failures. | Full-corpus EXE experiment view, duplicate/conflicting-label policy and frozen split. |
-| SOREL + Assemblage | Dataset cards and shared PE extractor available. | Source adapters, snapshot inventories, extraction pilots and coverage reports. |
+| SOREL + Assemblage | SOREL metadata audited; pretraining corpus conversion remains pending. | Resolve SOREL architecture policy; implement Assemblage reader and convert the selected scope of both sources. |
 | Data interfaces | Product validation, exact grouping and RAW/EXE comparison code available. | EXE-only manifest/storage input and cross-source overlap/project grouping. |
 | Tokenization + backbones | Byte/BPE utilities, Mamba/HRRFormer classifiers and supervised runner available. | Target-runtime feasibility and integration with common experiment inputs. |
 | MLM + transfer | To implement. | MLM head, masked loss, checkpoint transfer and synthetic end-to-end smoke test. |
@@ -18,8 +18,8 @@ configured run. Follow the [research protocol](research-protocol.md) for the stu
 ## Work Order
 
 1. **Prepare both pretraining sources:** SOREL uses `meta.db` and selected S3 objects; Assemblage
-   Windows PE uses the published SQLite and binary archives. Implement both readers, test roughly
-   100 sources each, choose scope from measured resources and convert through the shared extractor.
+   Windows PE uses the published SQLite and binary archives. Choose source scope and filtering
+   policy, complete the readers and convert through the shared extractor with durable progress.
    Follow the [data workflow](data-preparation.md).
 2. **Develop components alongside data preparation:** complete MLM, transfer and the synthetic
    smoke path described in [model components](model-components.md).

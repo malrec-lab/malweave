@@ -37,6 +37,15 @@ from malweave.data.rands_products import (
     load_exe_inputs,
     write_rands_product_outputs,
 )
+from malweave.data.sorel import (
+    SorelError,
+    export_sorel,
+    load_sorel_config,
+    plan_sorel_download,
+    prepare_sorel,
+    run_sorel,
+    verify_sorel,
+)
 from malweave.experiments.rands_comparison import (
     RandsComparisonError,
     build_rands_comparison_cohort,
@@ -65,6 +74,23 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     data = commands.add_parser("data", help="Inspect and prepare research datasets.")
     data_commands = data.add_subparsers(dest="data_command", required=True)
+    for operation in ("prepare", "download-plan", "extract", "run", "export", "verify"):
+        sorel = data_commands.add_parser(
+            f"sorel-{operation}", help=f"SOREL preparation: {operation}."
+        )
+        sorel.add_argument(
+            "--config", type=Path, default=CONFIGS_DIR / "datasets" / "sorel-pilot.yaml"
+        )
+        sorel.add_argument("--job-dir", type=Path, required=True)
+        if operation in ("prepare", "run"):
+            sorel.add_argument("--metadata", type=Path, required=operation == "prepare")
+        if operation in ("extract", "run"):
+            sorel.add_argument(
+                "--staged",
+                action="store_true",
+                help="Read the planned curl batch, deleting compressed inputs after commit.",
+            )
+            sorel.add_argument("--limit", type=int, default=None)
     experiment = commands.add_parser("experiment", help="Freeze and run declared experiments.")
     experiment_commands = experiment.add_subparsers(dest="experiment_command", required=True)
 
@@ -424,6 +450,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_project_environment()
 
     try:
+        if args.command == "data" and args.data_command.startswith("sorel-"):
+            if args.data_command == "sorel-export":
+                print(json.dumps(export_sorel(args.job_dir), indent=2, sort_keys=True))
+                return 0
+            if args.data_command == "sorel-verify":
+                print(json.dumps(verify_sorel(args.job_dir), indent=2, sort_keys=True))
+                return 0
+            config = load_sorel_config(args.config)
+            if args.data_command == "sorel-prepare":
+                summary = prepare_sorel(args.metadata, args.job_dir, config)
+            elif args.data_command == "sorel-download-plan":
+                summary = plan_sorel_download(args.job_dir, config)
+            else:
+                if (
+                    args.data_command == "sorel-run"
+                    and not (args.job_dir / "selection.json").exists()
+                ):
+                    if args.metadata is None:
+                        raise SorelError("A new job requires --metadata; resuming does not.")
+                    prepare_sorel(args.metadata, args.job_dir, config)
+                summary = run_sorel(args.job_dir, config, staged=args.staged, limit=args.limit)
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
         if args.command == "data" and args.data_command == "inspect":
             config = load_rands_dataset_config(args.config)
             locations = config.resolve_locations(args.root, args.metadata_root)
@@ -575,6 +624,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 130
     except (
         DatasetConfigError,
+        SorelError,
         RandsDataError,
         RandsExeError,
         RandsGhidraError,
