@@ -31,6 +31,11 @@ This is a RanDS feasibility extension, not a reproduction of the paper's origina
 - If EXE eligibility changes the cohort, RAW/EXE scores are not a paired comparison. A paired
   experiment would need a separately declared common cohort; these experiments are independent.
 
+For the optional shared-source, 50/50 validation/test comparison, use
+[Paired RAW/EXE cohort with balanced evaluation](malconv-raw.md#paired-rawexe-cohort-with-balanced-evaluation).
+It freezes new manifests for both representations and requires fresh byte-verifying staging
+reports; it does not alter the independent full preset described here.
+
 ## 1. Prepare independent EXE S3 manifest: metadata only
 
 ```bash

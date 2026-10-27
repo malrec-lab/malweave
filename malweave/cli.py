@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import yaml
 
 from malweave.config import CONFIGS_DIR, PROJECT_ROOT
+from malweave.data.common_cohort import CommonCohortError, freeze_balanced_common_cohort
 from malweave.data.dataset_config import DatasetConfigError, load_rands_dataset_config
 from malweave.data.family_coverage import (
     FamilyCoverageError,
@@ -208,6 +209,18 @@ def _parser() -> argparse.ArgumentParser:
     data_commands = data.add_subparsers(dest="data_command", required=True)
     experiment = commands.add_parser("experiment", help="Freeze and run declared experiments.")
     experiment_commands = experiment.add_subparsers(dest="experiment_command", required=True)
+
+    common = experiment_commands.add_parser(
+        "freeze-balanced-common", help="Pair RAW/EXE and balance validation/test metadata only."
+    )
+    common.add_argument("--raw-manifest", type=Path, required=True)
+    common.add_argument("--exe-manifest", type=Path, required=True)
+    common.add_argument("--raw-audit", type=Path, required=True)
+    common.add_argument("--exe-audit", type=Path, required=True)
+    common.add_argument(
+        "--config", type=Path, default=CONFIGS_DIR / "datasets/rands-common-balanced.yaml"
+    )
+    common.add_argument("--output-dir", type=Path, required=True)
 
     generic_inventory = data_commands.add_parser(
         "inventory-s3", help="List any S3 prefix into a private, unlabeled object inventory."
@@ -716,6 +729,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_project_environment()
 
     try:
+        if args.command == "experiment" and args.experiment_command == "freeze-balanced-common":
+            report = freeze_balanced_common_cohort(
+                args.raw_manifest,
+                args.exe_manifest,
+                args.raw_audit,
+                args.exe_audit,
+                args.config,
+                args.output_dir,
+            )
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 0
         if args.command == "data" and args.data_command == "inventory-s3":
             bucket = os.environ.get(args.bucket_env)
             if not bucket:
@@ -1215,6 +1239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(message, file=sys.stderr)
         return 130
     except (
+        CommonCohortError,
         DatasetConfigError,
         FamilyCoverageError,
         RandsDataError,

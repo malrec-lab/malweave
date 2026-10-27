@@ -1,0 +1,8 @@
+# Paired RAW/EXE detection cohort. Metadata-only selection, not a training config.
+snapshot: "2026-09-02"
+selection_seed: rands-common-balanced-v1
+balance_splits: [validation, test]
+year_ranges:
+  train: {max: 2022}
+  validation: {min: 2023, max: 2023}
+  test: {min: 2024}

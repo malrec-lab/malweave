@@ -64,6 +64,84 @@ pilot results. Keep staged PE files, SQLite progress, reports, and model artifac
 The cohort-selection salt remains unchanged after the experiment was renamed, so the already
 frozen local RAW manifests keep exactly the same rows and ordering.
 
+## Paired RAW/EXE cohort with balanced evaluation
+
+This optional protocol replaces neither historical manifests nor historical results. It follows
+the paper's 50/50 per-split class balance, but remains a RanDS adaptation (Year-based cutoffs,
+EXE-byte rather than DEC-based exact deduplication, and optional early stopping). Balance does
+not guarantee better accuracy, ROC-AUC, or checkpoint selection. It changes the evaluation
+population; do not choose a sampling seed based on model scores.
+
+`freeze-balanced-common` reads metadata only. It requires the audited EXE cohort to be a subset
+of RAW with identical source/split/label/year/snapshot assignments. It validates both complete
+input manifests before selection, including source and representation cross-split groups.
+The input EXE manifest must already be representation-deduplicated. Training must already be
+balanced and its source set is preserved. The command downsamples the majority class in each
+evaluation split to that split's minority count, without moving years, duplicating samples,
+fitting a tokenizer, or using prediction scores. RAW and EXE outputs use the same selected source
+order and EXE leakage groups. This creates a conditional-on-EXE-availability benchmark, not an
+estimate for every RanDS source.
+
+The selection contract is `configs/datasets/rands-common-balanced.yaml`. To reproduce the local
+metadata audit and freeze a **new** paired cohort:
+
+```bash
+uv run --locked malweave experiment freeze-balanced-common \
+  --raw-manifest reports/runpod-reports/staged/raw-full-train-balanced/split-manifest.csv \
+  --raw-audit reports/runpod-reports/staged/raw-full-train-balanced/manifest-summary.json \
+  --exe-manifest reports/runpod-reports/staged/exe-full-train-balanced-dedup/split-manifest.csv \
+  --exe-audit reports/runpod-reports/staged/exe-full-train-balanced-dedup/manifest-summary.json \
+  --output-dir data/processed/rands/common-balanced-v1
+```
+
+For the current frozen input pair, the metadata audit yields:
+
+| Split | Before: benign / ransomware | After: benign / ransomware | Removed |
+| --- | ---: | ---: | ---: |
+| Train | 17,925 / 17,925 | 17,925 / 17,925 | 0 |
+| Validation | 1,005 / 5,183 | 1,005 / 1,005 | 4,178 ransomware |
+| Test | 5,830 / 5,276 | 5,276 / 5,276 | 554 benign |
+
+There are 48,412 selected sources. The command writes `raw-split.csv`, `exe-split.csv`, their
+`*-summary.json` metadata audits, `cohort-summary.json`, and private `excluded.csv` (including
+RAW-only exclusions). Reports retain input/config digests, counts and removal reasons. These
+are **not staging certificates**. Do not edit an old staging report's counts or `passed` flag
+to bypass byte verification. The older ad-hoc `scripts/make_common_cohort.py` generated a derived
+report without these checks; use this CLI and the shared stager for the new balanced protocol.
+
+On the isolated worker with the matching code, manifests and existing RAW/EXE caches, run:
+
+```bash
+uv run --locked malweave experiment stage-inputs \
+  --experiment configs/experiments/malconv-raw.yaml \
+  --manifest data/processed/rands/common-balanced-v1/raw-split.csv \
+  --manifest-summary data/processed/rands/common-balanced-v1/raw-summary.json \
+  --output-root work/staged/rands-common-balanced-v1/raw \
+  --reuse-root work/staged/rands-malconv-raw/full-train-balanced
+
+uv run --locked malweave experiment stage-inputs \
+  --experiment configs/experiments/malconv-exe.yaml \
+  --manifest data/processed/rands/common-balanced-v1/exe-split.csv \
+  --manifest-summary data/processed/rands/common-balanced-v1/exe-summary.json \
+  --output-root work/staged/rands-common-balanced-v1/exe \
+  --reuse-root work/staged/rands-malconv-exe/full-train-balanced-dedup
+```
+
+Reuse verifies bytes and hardlinks valid cached files where supported; unavailable cached files
+may be fetched from the configured S3 source. Keep a new state/output root and one writer per
+root; use `--resume` only after an interrupted staging operation. Both staging reports must
+pass before training. Pass the new `--split-manifest` and `--staging-report` explicitly to
+`experiment train`; **do not use the old full preset**. Keep RAW/EXE run IDs separate and keep
+the chosen one-epoch or 30-epoch/patience-5 training settings unchanged between paired runs.
+
+Historical EXE early-stopping runs cannot serve as the matched balanced-validation baseline:
+validation, checkpoint selection, threshold and possibly data order have changed. Retrain the
+paired comparison, and evaluate test only after model/threshold selection on validation. Saved
+one-epoch models can be rescored without retraining if only test membership changes and their
+training order/protocol is otherwise accepted as fixed. Keep old results separate. Family
+overlap is allowed and should be reported; balance does not prove unseen-family generalization.
+The smaller benign evaluation pool also limits low-FPR precision, especially at FPR=1e-4.
+
 ## Frozen pilot settings
 
 The first bounded feasibility run uses seed `42`, one epoch, an effective batch of up to 64 (one file per
