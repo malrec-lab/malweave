@@ -1,20 +1,26 @@
-# Versioned Research Configuration
+# Research configuration
 
-Keep human-reviewed, non-sensitive configuration here. `datasets/` describes release-specific inputs and `experiments/` captures model, training, evaluation, and logging choices. Never place credentials, raw sample lists, private URLs, or downloaded data in these files.
+Keep non-sensitive dataset and experiment inputs here. Credentials, private URLs,
+source inventories and generated artifacts stay outside Git. Preserve resolved config
+with each reported run; existing configs are not approval to start a new experiment.
 
-Create one committed experiment configuration per reported result and write the fully resolved copy into its ignored model/run directory at execution time.
+The current priority is [LMLM checkpoint fine-tuning/evaluation on RanDS](../docs/mkdocs/docs/workflows/lmlm-checkpoints.md).
+**No config for that experiment has been established.** Model, tokenizer, cohort and
+schedule will be discussed after checkpoint verification.
 
-Dataset configs use YAML and identify local roots through environment-variable names. Developers
-may set those variables in the ignored root `.env` using `.env.example` as a template. Configs may
-contain aggregate release counts and protocol filters, but never absolute machine paths or sample
-inventories.
+## Retained configurations
 
-Define external-pretraining and EXE downstream configs using the
-[research protocol](../docs/mkdocs/docs/workflows/research-protocol.md). Configs record source
-scope, input manifests, model/tokenizer settings and evaluation choices.
-`datasets/sorel-pilot.yaml` is a development smoke-test config, not the pretraining corpus scope.
-For corpus preparation, use an explicit reviewed config and a separate job directory; see
-[data preparation](../docs/mkdocs/docs/workflows/data-preparation.md).
-`data sorel-run` prepares and processes batches continuously; repeat it to resume the same job.
-The config controls workers/batch and size limits, per-tool deadlines, downloader and retries.
-The Assemblage adapter and EXE-only runner interface are implementation tasks.
+These support the [paused self-pretraining direction](../docs/mkdocs/docs/workflows/self-pretraining.md)
+or existing data tools:
+
+| File/group | Purpose |
+| --- | --- |
+| `datasets/rands-raw-2026.yaml` | RanDS raw-release audit expectations. |
+| `datasets/sorel-full.yaml` | SOREL v3.1 conversion; [protocol](../docs/mkdocs/docs/workflows/sorel-protocol.md) and [guide](../docs/mkdocs/docs/workflows/sorel-conversion.md). |
+| `datasets/sorel-pilot.yaml` | Legacy pilot/round-robin workflow; incompatible with v3.1 resume. |
+| `experiments/rands-exe-scratch.yaml` | Independent RanDS scratch baseline; random BiMamba weights, RanDS-training-only BPE and resumable supervised training. |
+| `worker-images.json` | Retained worker image/tool identity. |
+| `storage/` | Example AWS access policies; actual destinations and credentials are private. |
+
+The scratch config's architecture, context, split and five-epoch schedule do not
+define the checkpoint experiment. See its [retained guide](../docs/mkdocs/docs/workflows/rands-scratch.md).

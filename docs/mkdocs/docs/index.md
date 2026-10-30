@@ -1,24 +1,15 @@
-# MalWeave Research Documentation
+# MalWeave
 
-The study evaluates **external PE/EXE pretraining and label-efficient RanDS fine-tuning**.
-Pretraining uses SOREL malware and Assemblage Windows PE background software. Downstream evaluation
-starts with ransomware-versus-benign detection using a small bidirectional Mamba.
+There are two research directions:
 
-The data pipeline is **PE → executable/code sections (EXE) → byte mapping → BPE**. Compare
-random-token MLM pretraining against random model initialization at 10%, 25% and 100% training-label
-budgets, then evaluate span masking as a separate extension.
+1. **Current priority:** use [public LMLM checkpoints](workflows/lmlm-checkpoints.md),
+   fine-tune and evaluate on RanDS. Checkpoint verification and detailed design are pending.
+2. **Paused:** [prepare data and pretrain a lightweight model](workflows/self-pretraining.md),
+   then fine-tune and investigate extensions. Existing code, decisions and evidence are retained.
 
-**Current data progress:** RanDS has been converted to EXE and uploaded to S3. Extraction produced
-215,040 successful representations from 215,404 sources, with 364 recorded failures. SOREL/Assemblage
-preparation and MLM integration are the next implementation tasks.
+The [research overview](workflows/research-protocol.md) is the entry point.
+Each direction owns its detailed plan; operational guides document existing workflows.
 
-Read in this order:
-
-1. [Research protocol](workflows/research-protocol.md): scope, comparisons and evaluation.
-2. [Data preparation](workflows/data-preparation.md): sources, representations and quality checks.
-3. [Research workstreams](workflows/research-workstreams.md): progress and task order.
-4. [Getting started](getting-started.md) and [model components](workflows/model-components.md).
-5. [Dataset catalog](datasets/index.md) for schema, identity and access conditions.
-
-Use [project structure](project-structure.md), [onboarding](onboarding.md) and the
-[environment guide](development/environment.md) when implementing a task.
+For development, read [getting started](getting-started.md),
+[project structure](project-structure.md) and [environment](development/environment.md).
+Use the [dataset catalog](datasets/index.md) for source-specific facts.

@@ -12,11 +12,11 @@ import subprocess
 import zlib
 
 import pytest
-from tests.data.test_pe_sections import _synthetic_pe
 
 from malweave.cli import main
 from malweave.data import pe_assessment, sorel
 from malweave.data.pe_sections import IMAGE_SCN_CNT_CODE
+from tests.data.test_pe_sections import _synthetic_pe
 
 
 def _job(tmp_path: Path, *, count: int = 4, architecture: str = "annotate"):

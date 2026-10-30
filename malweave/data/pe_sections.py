@@ -142,10 +142,17 @@ def extract_executable_sections(
         except (RuntimeError, ValueError, TypeError) as error:
             audit["serialization_error"] = str(error)
             return finish("lief_audit_error")
+        pe_offset = struct.unpack_from("<I", content, 0x3C)[0]
+        section_table = pe_offset + 24 + struct.unpack_from("<H", content, pe_offset + 20)[0]
         audit["sections"] = [
             {
                 "index": index,
-                "name": section.name,
+                "name": section.name.decode("utf-8", errors="replace")
+                if isinstance(section.name, bytes)
+                else section.name,
+                "name_raw_hex": content[
+                    section_table + index * 40 : section_table + index * 40 + 8
+                ].hex(),
                 "raw_offset": section.offset,
                 "raw_size": section.size,
                 "virtual_address": section.virtual_address,

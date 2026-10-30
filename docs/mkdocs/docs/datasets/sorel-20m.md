@@ -1,6 +1,6 @@
 # SOREL-20M Malware Dataset
 
-> Active role: registered malware PE subset for external self-supervised pretraining. Raw benign
+> Role: registered malware PE subset for the [paused self-pretraining direction](../workflows/self-pretraining.md). Raw benign
 > binaries are not publicly released. Read selected binaries in batches; the full raw corpus is not
 > required locally. See [data preparation](../workflows/data-preparation.md).
 

@@ -65,7 +65,7 @@ def exe_words_to_text(content: bytes, word_bytes: int = EXE_WORD_BYTES) -> str:
 
 
 def train_exe_bpe_tokenizer(
-    train_contents: Iterable[bytes], vocab_size: int = 16_384
+    train_contents: Iterable[bytes], vocab_size: int = 16_384, *, full_byte_coverage: bool = False
 ) -> Tokenizer:
     """Fit BPE exclusively from the already-frozen training partition's EXE bytes."""
     if vocab_size < len(SPECIAL_TOKEN_ORDER):
@@ -76,6 +76,9 @@ def train_exe_bpe_tokenizer(
         vocab_size=vocab_size,
         special_tokens=list(SPECIAL_TOKEN_ORDER),
         show_progress=False,
+        initial_alphabet=(
+            [chr(value + 10_752) for value in range(256)] if full_byte_coverage else []
+        ),
     )
 
     seen = 0

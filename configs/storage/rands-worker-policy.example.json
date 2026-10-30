@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListRandsInputsAndTrainingResults",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::YOUR-RANDS-BUCKET", "arn:aws:s3:::YOUR-RESULTS-BUCKET"]
+    },
+    {
+      "Sid": "ReadExtractedRandsAndLabelsOnly",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::YOUR-RANDS-BUCKET/rands/representations/exe/*",
+        "arn:aws:s3:::YOUR-RANDS-BUCKET/RanDS_PE_Dataset/Benign.csv",
+        "arn:aws:s3:::YOUR-RANDS-BUCKET/RanDS_PE_Dataset/Ransomware.csv"
+      ]
+    },
+    {
+      "Sid": "TrainingArtifactsAndPermissionProbe",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+      "Resource": "arn:aws:s3:::YOUR-RESULTS-BUCKET/malweave/experiments/rands-scratch/*"
+    }
+  ]
+}

@@ -1,5 +1,8 @@
 # Assemblage Windows PE
 
+> Status: retained source for [self-pretraining](../workflows/self-pretraining.md), currently paused.
+> Acquisition is not required to investigate the released LMLM checkpoints.
+
 Assemblage builds binaries from licensed open-source repositories and publishes metadata about
 projects and build configurations. This study selects **GitHub Windows PE** as background software
 for self-supervised pretraining. The generator is MIT-licensed; each binary retains its source

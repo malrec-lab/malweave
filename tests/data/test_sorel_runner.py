@@ -8,17 +8,18 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+from threading import Event
 import tracemalloc
 import zlib
 
 import pytest
-from tests.data.test_pe_sections import _synthetic_pe
-from tests.data.test_sorel import _job, _scanners, _stage
 import yaml
 
 from malweave.cli import main
 from malweave.data import sorel
 from malweave.data.pe_sections import IMAGE_SCN_CNT_CODE
+from tests.data.test_pe_sections import _synthetic_pe
+from tests.data.test_sorel import _job, _scanners, _stage
 
 
 def _curl_fixture(monkeypatch):
@@ -71,6 +72,68 @@ def test_automatic_run_resumes_without_history_reads_or_per_batch_exports(tmp_pa
         downloads = list(csv.DictReader(stream))
     assert len(downloads) == 5 and {row["http_status"] for row in downloads} == {"200"}
     assert final["network_received_bytes"] == sum(int(row["received_bytes"]) for row in downloads)
+
+
+def test_progress_commits_fast_source_before_slow_source_and_keeps_heartbeat(
+    tmp_path, monkeypatch, capsys
+):
+    job, config, _ = _job(tmp_path, count=2)
+    _scanners(monkeypatch)
+    _curl_fixture(monkeypatch)
+    with sqlite3.connect(job / "state.sqlite") as connection:
+        slow_id = sorel.ledger.pending(connection, 2)[0]["original_sha256"]
+    fast_committed = Event()
+    process = sorel._process
+    record = sorel.ledger.record
+
+    def delayed(source, *args):
+        if source["original_sha256"] == slow_id:
+            assert fast_committed.wait(timeout=5), "Slow source blocked the fast source's commit"
+        return process(source, *args)
+
+    def track(connection, row):
+        record(connection, row)
+        if row["original_sha256"] != slow_id:
+            assert connection.execute(
+                "SELECT done FROM sources WHERE id=?", (slow_id,)
+            ).fetchone() == (0,)
+            fast_committed.set()
+
+    monkeypatch.setattr(sorel, "_process", delayed)
+    monkeypatch.setattr(sorel.ledger, "record", track)
+    # Force a wait timeout deterministically; no sleeping or timing-dependent assertions.
+    wait = sorel.wait
+    first_wait = True
+
+    def heartbeat(futures, **kwargs):
+        nonlocal first_wait
+        if first_wait:
+            first_wait = False
+            return set(), futures
+        return wait(futures, **kwargs)
+
+    monkeypatch.setattr(sorel, "wait", heartbeat)
+    sorel.run_sorel(job, config)
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert any(event["event"] == "heartbeat" and event["in_flight"] == 2 for event in events)
+    progress = [event for event in events if event["event"] == "progress"]
+    assert [event["completed"] for event in progress] == [1, 2]
+    assert all(
+        event["files_per_second"] > 0 and event["elapsed_seconds"] > 0 for event in progress
+    )
+    assert progress[-1]["success"] == 2 and progress[-1]["eta_seconds"] == 0
+    assert events[-1]["event"] == "finished"
+    sorel.run_sorel(job, config)
+    resumed = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert resumed[-1]["completed"] == 2 and resumed[-1]["processed_this_invocation"] == 0
+    assert resumed[-1]["files_per_second"] == 0
+
+
+@pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf")])
+def test_progress_interval_must_be_positive_and_finite(tmp_path, interval):
+    job, config, _ = _job(tmp_path, count=1)
+    with pytest.raises(sorel.SorelError, match="progress_seconds"):
+        sorel.run_sorel(job, config, progress_seconds=interval)
 
 
 def test_interruption_after_commit_keeps_progress_and_reuses_completed_downloads(

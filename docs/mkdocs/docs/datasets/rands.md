@@ -1,7 +1,9 @@
 # RanDS Ransomware Dataset
 
 > Role: downstream EXE ransomware-versus-benign detection. RanDS has been converted to EXE
-> and uploaded to S3. See [data preparation](../workflows/data-preparation.md) for the pipeline.
+> and uploaded to S3. It supports both [research directions](../workflows/research-protocol.md).
+> Compatibility with released LMLM checkpoints remains to be verified; see
+> [data preparation](../workflows/data-preparation.md).
 > Other feature representations below provide dataset background.
 
 ## Overview

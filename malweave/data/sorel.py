@@ -7,7 +7,7 @@ pre-disarming bytes and must never be compared with released-PE digests.
 from __future__ import annotations
 
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import closing
 import csv
 from dataclasses import asdict, dataclass
@@ -52,6 +52,8 @@ class SorelConfig:
     release: str = "09-DEC-2020"
     seed: int = 42
     samples: int = 100
+    partition_count: int = 1
+    partition_index: int = 1
     batch_size: int = 8
     workers: int = 2
     architecture_policy: str = "annotate"
@@ -74,8 +76,14 @@ def load_sorel_config(path: Path) -> SorelConfig:
             value = getattr(config, key)
             if type(value) is not type(default):
                 raise ValueError(f"{key} has an invalid type")
-            if isinstance(value, int) and (value < 0 or (key != "seed" and value == 0)):
+            if isinstance(value, int) and (
+                value < 0 or (key not in ("seed", "samples") and value == 0)
+            ):
                 raise ValueError(f"{key} must be positive")
+        if config.partition_index > config.partition_count:
+            raise ValueError("partition_index must not exceed partition_count")
+        if config.partition_count > 1 and config.samples != 0:
+            raise ValueError("partitioned collection requires samples: 0 (all malware)")
         if config.release != "09-DEC-2020":
             raise ValueError("unsupported release")
         if config.architecture_policy not in ("annotate", "i386"):
@@ -100,8 +108,13 @@ def _private(path: Path) -> Path:
     return path
 
 
+def _progress(event: str, **values: Any) -> None:
+    """Flush aggregate progress to stderr, including when stdout is redirected."""
+    print(json.dumps({"event": event, **values}, sort_keys=True), file=sys.stderr, flush=True)
+
+
 def prepare_sorel(metadata: Path, job: Path, config: SorelConfig) -> dict[str, Any]:
-    """Audit metadata and reservoir-sample into SQLite with bounded Python memory."""
+    """Audit metadata and freeze a sample or a disjoint full-corpus partition."""
     job = _private(job)
     with job_lock(job):
         return _prepare_sorel(metadata, job, config)
@@ -118,28 +131,62 @@ def _prepare_sorel(metadata: Path, job: Path, config: SorelConfig) -> dict[str, 
     invalid_ids = eligible = 0
     with closing(ledger.connect(job / "state.sqlite")) as target:
         with sqlite3.connect(metadata.resolve().as_uri() + "?mode=ro", uri=True) as source:
+            last_update = started
+            phase = "sqlite_quick_check"
+
+            def audit_progress() -> int:
+                nonlocal last_update
+                now = time.monotonic()
+                if now - last_update >= 5:
+                    _progress(
+                        "preparing",
+                        phase=phase,
+                        metadata_rows=sum(labels.values()),
+                        elapsed_seconds=round(now - started, 3),
+                    )
+                    last_update = now
+                return 0
+
+            source.set_progress_handler(audit_progress, 100_000)
+            _progress("preparing", phase=phase, elapsed_seconds=0)
             if source.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                 raise SorelError("Metadata SQLite quick_check failed.")
             columns = [row[1] for row in source.execute("PRAGMA table_info(meta)")]
             if not {"sha256", "is_malware", "rl_fs_t"}.issubset(columns):
                 raise SorelError("Metadata lacks required ID, label or first-seen columns.")
+            phase = "duplicate_check"
+            _progress(
+                "preparing", phase=phase, elapsed_seconds=round(time.monotonic() - started, 3)
+            )
             duplicates = source.execute(
                 "SELECT COUNT(*) FROM (SELECT sha256 FROM meta GROUP BY sha256 HAVING COUNT(*) > 1)"
             ).fetchone()[0]
             if duplicates:
                 raise SorelError("Metadata contains duplicate IDs.")
-            for identifier, label, first_seen in source.execute(
-                "SELECT sha256,is_malware,rl_fs_t FROM meta"
-            ):
+            phase = "selecting_sources"
+            _progress(
+                "preparing", phase=phase, elapsed_seconds=round(time.monotonic() - started, 3)
+            )
+            query = "SELECT sha256,is_malware,rl_fs_t FROM meta"
+            if config.samples == 0:
+                query += " ORDER BY sha256"
+            for identifier, label, first_seen in source.execute(query):
                 labels[str(label)] += 1
+                if sum(labels.values()) % 10_000 == 0:
+                    audit_progress()
                 if not isinstance(identifier, str) or not ID_PATTERN.fullmatch(identifier):
                     invalid_ids += 1
                     continue
                 if label != 1:
                     continue
                 eligible += 1
-                slot = eligible - 1 if eligible <= config.samples else rng.randrange(eligible)
-                if slot < config.samples:
+                if config.samples == 0:
+                    slot = eligible - 1
+                    include = slot % config.partition_count == config.partition_index - 1
+                else:
+                    slot = eligible - 1 if eligible <= config.samples else rng.randrange(eligible)
+                    include = slot < config.samples
+                if include:
                     value = json.dumps(
                         {"original_sha256": identifier, "is_malware": 1, "rl_fs_t": first_seen},
                         sort_keys=True,
@@ -150,8 +197,20 @@ def _prepare_sorel(metadata: Path, job: Path, config: SorelConfig) -> dict[str, 
                         (slot, identifier, value),
                     )
             selected = target.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
-        passed = (
-            not invalid_ids and set(labels).issubset({"0", "1"}) and selected == config.samples
+        expected = (
+            max(
+                0,
+                (eligible + config.partition_count - config.partition_index)
+                // config.partition_count,
+            )
+            if config.samples == 0
+            else config.samples
+        )
+        passed = not invalid_ids and set(labels).issubset({"0", "1"}) and selected == expected
+        _progress(
+            "preparing",
+            phase="metadata_sha256",
+            elapsed_seconds=round(time.monotonic() - started, 3),
         )
         audit = {
             "passed": passed,
@@ -165,6 +224,11 @@ def _prepare_sorel(metadata: Path, job: Path, config: SorelConfig) -> dict[str, 
             "metadata_bytes": metadata.stat().st_size,
             "metadata_sha256": _digest(metadata),
             "selection_seed": config.seed,
+            "selection_method": "sha256_order_round_robin"
+            if config.samples == 0
+            else "reservoir_sample",
+            "partition_count": config.partition_count,
+            "partition_index": config.partition_index,
             "runtime_seconds": round(time.monotonic() - started, 3),
         }
         _json_write(job / "metadata-audit.json", audit)
@@ -183,6 +247,7 @@ def _prepare_sorel(metadata: Path, job: Path, config: SorelConfig) -> dict[str, 
             "sources_table": "state.sqlite:sources",
         }
         _json_write(job / "selection.json", selection)
+    _progress("prepared", selected=selected, elapsed_seconds=round(time.monotonic() - started, 3))
     return {key: value for key, value in audit.items() if key != "metadata_sha256"}
 
 
@@ -215,6 +280,12 @@ def _tool(command: str) -> dict[str, str]:
             raise SorelError("Audited curl transfers require curl >= 7.70; use urllib otherwise.")
     if command == "diec":
         binary = Path(executable).resolve()
+        libraries = sha256()
+        for path in sorted(binary.parent.glob("lib*.so*")):
+            if path.is_file():
+                libraries.update(path.name.encode())
+                libraries.update(bytes.fromhex(_digest(path)))
+        identity["bundled_libraries_sha256"] = libraries.hexdigest()
         roots = (binary.parent.parent / "Resources", binary.parent)
         rules = next((root for root in roots if (root / "db").is_dir()), None)
         if rules:
@@ -243,11 +314,20 @@ def _connect(job: Path, config: SorelConfig, *, tools: dict[str, Any]) -> sqlite
             "adapter_sha256": _digest(Path(__file__)),
             "support_sha256": {
                 name: _digest(Path(__file__).with_name(name + ".py"))
-                for name in ("sorel_io", "sorel_ledger", "sorel_transfer", "pe_worker")
+                for name in (
+                    "sorel_io",
+                    "sorel_ledger",
+                    "sorel_transfer",
+                    "sorel_archive",
+                    "pe_worker",
+                )
             },
             "lief": lief.__version__,
             "config": asdict(config),
-            "tools": tools,
+            "tools": {
+                name: {key: value for key, value in tool.items() if key != "path"}
+                for name, tool in tools.items()
+            },
         },
         sort_keys=True,
     )
@@ -278,10 +358,10 @@ def plan_sorel_download(job: Path, config: SorelConfig) -> dict[str, int]:
     """Legacy external staging plan. Prefer sorel-run for complete transfer receipts."""
     job = _private(job)
     with job_lock(job):
-        _selection(job, config)
+        selection = _selection(job, config)
         with closing(ledger.connect(job / "state.sqlite")) as connection:
             batch = ledger.pending(connection, config.batch_size)
-            summary = ledger.summary(connection, config.samples)
+            summary = ledger.summary(connection, selection["selected"])
         spool = job / "spool"
         spool.mkdir(exist_ok=True)
         if any(spool.iterdir()):
@@ -563,7 +643,9 @@ def _verify_row(job: Path, row: dict[str, Any]) -> None:
     if row.get("download_receipt_report_path"):
         _verify_transfer(job, row)
     if row["status"] == "success":
-        output = (job / row["exe_path"]).resolve()
+        from malweave.data.sorel_archive import artifact_path
+
+        output = artifact_path(job, row, row["exe_path"])
         if (
             not output.is_relative_to(job)
             or not output.is_file()
@@ -609,28 +691,90 @@ def verify_sorel(job: Path) -> dict[str, Any]:
 
 
 def run_sorel(
-    job: Path, config: SorelConfig, *, staged: bool = False, limit: int | None = None
+    job: Path,
+    config: SorelConfig,
+    *,
+    staged: bool = False,
+    limit: int | None = None,
+    progress_seconds: float = 5,
+    s3_prefix: str | None = None,
 ) -> dict[str, Any]:
     """Process indexed pending rows; no full-history reads or exports inside the batch loop."""
     job = _private(job)
     with job_lock(job):
-        return _run_sorel(job, config, staged=staged, limit=limit)
+        return _run_sorel(
+            job,
+            config,
+            staged=staged,
+            limit=limit,
+            progress_seconds=progress_seconds,
+            s3_prefix=s3_prefix,
+        )
 
 
 def _run_sorel(
-    job: Path, config: SorelConfig, *, staged: bool, limit: int | None
+    job: Path,
+    config: SorelConfig,
+    *,
+    staged: bool,
+    limit: int | None,
+    progress_seconds: float,
+    s3_prefix: str | None = None,
 ) -> dict[str, Any]:
-    _selection(job, config)
+    selection = _selection(job, config)
+    selected = selection["selected"]
     if limit is not None and limit <= 0:
         raise SorelError("limit must be positive")
+    if not 0 < progress_seconds < float("inf"):
+        raise SorelError("progress_seconds must be finite and positive")
+    _progress("checking_tools")
     names = ["file", "diec"] + (
         ["curl"] if not staged and config.download_backend == "curl" else []
     )
     tools = {name: _tool(name) for name in names}
     connection = _connect(job, config, tools=tools)
+    archive = None
     try:
+        from malweave.data.sorel_archive import SorelArchive
+
+        remote = job / "remote.json"
+        if remote.exists() and not s3_prefix:
+            s3_prefix = json.loads(remote.read_text())["prefix"]
+        if s3_prefix:
+            archive = SorelArchive(job, s3_prefix, config)
+            archive.flush(connection)
+            if not (job / "checkpoint-latest.json").exists():
+                archive.checkpoint(connection)
         started = time.monotonic()
         processed = 0
+
+        def report(event: str, in_flight: int = 0) -> None:
+            current = ledger.summary(connection, selected)
+            elapsed = time.monotonic() - started
+            rate = processed / elapsed if elapsed > 0 else 0
+            remaining = min(current["pending"], limit - processed) if limit else current["pending"]
+            statuses = current["status_counts"]
+            success = statuses.get("success", 0)
+            filtered = sum(
+                count for status, count in statuses.items() if status.startswith("filtered_")
+            )
+            _progress(
+                event,
+                completed=current["completed"],
+                selected=selected,
+                partition_index=config.partition_index,
+                partition_count=config.partition_count,
+                processed_this_invocation=processed,
+                in_flight=in_flight,
+                success=success,
+                filtered=filtered,
+                failed=current["completed"] - success - filtered,
+                elapsed_seconds=round(elapsed, 3),
+                files_per_second=round(rate, 3),
+                eta_seconds=round(remaining / rate, 1) if rate else None,
+            )
+
+        report("started")
         (job / "scratch").mkdir(exist_ok=True)
         # A terminated runner can leave bounded temporary files after its last commit.
         for path in (job / "scratch").iterdir():
@@ -669,16 +813,30 @@ def _run_sorel(
                 if not batch:
                     break
                 _check_disk(job, config)
-                results = executor.map(
-                    lambda source: _process(source, job, config, tools, staged), batch
-                )
-                for row in results:
-                    # The evidence and EXE are durable before committing a completed outcome.
-                    _verify_row(job, row)
-                    ledger.record(connection, row)
-                    (job / "spool" / f"{row['original_sha256']}.zlib").unlink(missing_ok=True)
-                    processed += 1
-                summary = ledger.summary(connection, config.samples)
+                futures = {
+                    executor.submit(_process, source, job, config, tools, staged)
+                    for source in batch
+                }
+                while futures:
+                    done, futures = wait(
+                        futures, timeout=progress_seconds, return_when=FIRST_COMPLETED
+                    )
+                    if not done:
+                        report("heartbeat", len(futures))
+                    for future in done:
+                        row = future.result()
+                        if archive and row["status"] == "success":
+                            row["exe_s3_uri"] = archive.prefix + "/" + row["exe_path"]
+                        # Evidence and EXE are durable before committing a completed outcome.
+                        _verify_row(job, row)
+                        ledger.record(connection, row)
+                        (job / "spool" / f"{row['original_sha256']}.zlib").unlink(missing_ok=True)
+                        processed += 1
+                        report("progress", len(futures))
+                if archive:
+                    report("publishing")
+                    archive.flush(connection)
+                summary = ledger.summary(connection, selected)
                 summary.update(
                     architecture_policy=config.architecture_policy,
                     staged_download_time_excluded=staged,
@@ -686,22 +844,31 @@ def _run_sorel(
                     note="Completed means accounted, not all accepted for training.",
                 )
                 _json_write(job / "summary.json", summary)
-                print(
-                    json.dumps({"completed": summary["completed"], "selected": config.samples}),
-                    flush=True,
-                )
                 if staged or (limit and processed >= limit):
                     break
-        summary = ledger.summary(connection, config.samples)
+        summary = ledger.summary(connection, selected)
         summary.update(
             architecture_policy=config.architecture_policy,
             staged_download_time_excluded=staged,
             this_invocation_seconds=round(time.monotonic() - started, 3),
         )
         _json_write(job / "summary.json", summary)
+        if archive:
+            report("checkpointing")
+            archive.checkpoint(connection)
+            _export_sorel(job, ledger.SavedRows(connection), details=False)
+            archive.publish_exports()
         if summary["pending"] == 0:
-            export_sorel(job, _locked=True)
+            report("exporting")
+            if not archive:
+                export_sorel(job, _locked=True)
+        report("finished")
         return summary
+    except KeyboardInterrupt:
+        if archive:
+            archive.flush(connection)
+            archive.checkpoint(connection)
+        raise
     finally:
         connection.close()
 
@@ -716,7 +883,9 @@ def _csv_value(value: Any) -> Any:
 
 
 def _read_tool_report(job: Path, row: dict[str, Any], name: str) -> dict[str, Any]:
-    path = (job / row[f"{name}_report_path"]).resolve()
+    from malweave.data.sorel_archive import artifact_path
+
+    path = artifact_path(job, row, row[f"{name}_report_path"])
     if (
         not path.is_relative_to(job)
         or not path.is_file()
@@ -760,10 +929,13 @@ def export_sorel(job: Path, *, _locked: bool = False) -> dict[str, Any]:
         return _export_sorel(job, ledger.SavedRows(connection))
 
 
-def _export_sorel(job: Path, rows: ledger.SavedRows) -> dict[str, Any]:
-    """Export saved results without network access, PE reads or scanner calls."""
+def _export_sorel(
+    job: Path, rows: Any, *, output_dir: Path | None = None, details: bool = True
+) -> dict[str, Any]:
+    """Export saved results; archived jobs retrieve evidence without rescanning PEs."""
     job = _private(job)
-    manifest = job / "manifest.json"
+    output_dir = output_dir or job
+    manifest = output_dir / "manifest.json"
     temporary = manifest.with_suffix(".json.tmp")
     with temporary.open("w", encoding="utf-8") as stream:
         stream.write("[\n")
@@ -775,7 +947,7 @@ def _export_sorel(job: Path, rows: ledger.SavedRows) -> dict[str, Any]:
     temporary.replace(manifest)
     fields = ["original_sha256", "status", "packing", "architecture"]
     fields += sorted({key for row in rows for key in row} - set(fields))
-    path = job / "results.csv"
+    path = output_dir / "results.csv"
     temporary = path.with_suffix(".csv.tmp")
     with temporary.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
@@ -784,7 +956,17 @@ def _export_sorel(job: Path, rows: ledger.SavedRows) -> dict[str, Any]:
             writer.writerow({key: _csv_value(value) for key, value in row.items()})
     temporary.replace(path)
 
-    path = job / "die-detections.csv"
+    if not details:
+        result = {
+            "exported_sources": len(rows),
+            "status_counts": dict(Counter(row["status"] for row in rows)),
+            "files": ["results.csv", "manifest.json"],
+            "note": "Full tool/download CSVs are retained in each S3 evidence archive.",
+        }
+        _json_write(output_dir / "export-summary.json", result)
+        return result
+
+    path = output_dir / "die-detections.csv"
     temporary = path.with_suffix(".csv.tmp")
     fields = [
         "original_sha256",
@@ -840,7 +1022,7 @@ def _export_sorel(job: Path, rows: ledger.SavedRows) -> dict[str, Any]:
                     )
     temporary.replace(path)
 
-    path = job / "tool-runs.csv"
+    path = output_dir / "tool-runs.csv"
     temporary = path.with_suffix(".csv.tmp")
     fields = [
         "original_sha256",
@@ -904,12 +1086,13 @@ def _export_sorel(job: Path, rows: ledger.SavedRows) -> dict[str, Any]:
                     )
     temporary.replace(path)
 
-    path = job / "lief-sections.csv"
+    path = output_dir / "lief-sections.csv"
     temporary = path.with_suffix(".csv.tmp")
     fields = [
         "original_sha256",
         "index",
         "name",
+        "name_raw_hex",
         "raw_offset",
         "raw_size",
         "virtual_address",
@@ -938,7 +1121,7 @@ def _export_sorel(job: Path, rows: ledger.SavedRows) -> dict[str, Any]:
                         }
                     )
     temporary.replace(path)
-    transfer_counts = _export_downloads(job, rows)
+    transfer_counts = _export_downloads(job, rows, output_dir=output_dir)
     summary = {
         "exported_sources": len(rows),
         "status_counts": dict(Counter(row["status"] for row in rows)),
@@ -953,12 +1136,14 @@ def _export_sorel(job: Path, rows: ledger.SavedRows) -> dict[str, Any]:
         "download_status_counts": transfer_counts,
         "note": "Exports use saved evidence only. Missing historical reports are not reconstructed.",
     }
-    _json_write(job / "export-summary.json", summary)
+    _json_write(output_dir / "export-summary.json", summary)
     return summary
 
 
-def _export_downloads(job: Path, rows: ledger.SavedRows) -> dict[str, int]:
-    path = job / "downloads.csv"
+def _export_downloads(job: Path, rows: Any, *, output_dir: Path | None = None) -> dict[str, int]:
+    from malweave.data.sorel_archive import artifact_path
+
+    path = (output_dir or job) / "downloads.csv"
     temporary = path.with_suffix(".csv.tmp")
     fields = [
         "original_sha256",
@@ -995,13 +1180,14 @@ def _export_downloads(job: Path, rows: ledger.SavedRows) -> dict[str, int]:
                 counts["receipt_not_saved"] += 1
                 continue
             _verify_transfer(job, row)
-            directory = (job / row["download_receipt_report_path"]).parent
+            relative_directory = Path(row["download_receipt_report_path"]).parent
+            directory = artifact_path(job, row, row["download_receipt_report_path"]).parent
             for attempt in sorted(directory.glob("attempt-*.json")):
                 record = json.loads(attempt.read_text())
                 writer.writerow(
                     {
                         **{key: _csv_value(record.get(key, "")) for key in fields},
-                        "report_path": attempt.relative_to(job).as_posix(),
+                        "report_path": (relative_directory / attempt.name).as_posix(),
                         "report_sha256": _digest(attempt),
                     }
                 )
@@ -1011,8 +1197,10 @@ def _export_downloads(job: Path, rows: ledger.SavedRows) -> dict[str, int]:
 
 
 def _verify_transfer(job: Path, row: dict[str, Any]) -> None:
+    from malweave.data.sorel_archive import artifact_path
+
     receipt = _read_tool_report(job, row, "download_receipt")
-    directory = (job / row["download_receipt_report_path"]).parent
+    directory = artifact_path(job, row, row["download_receipt_report_path"]).parent
     previous = None
     seconds = 0.0
     size = 0

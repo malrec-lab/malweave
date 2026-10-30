@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -37,6 +39,13 @@ from malweave.data.rands_products import (
     load_exe_inputs,
     write_rands_product_outputs,
 )
+from malweave.data.rands_training import (
+    Progress,
+    RandsTrainingError,
+    check_storage,
+    fetch_exe,
+    prepare_exe,
+)
 from malweave.data.sorel import (
     SorelError,
     export_sorel,
@@ -54,11 +63,7 @@ from malweave.experiments.rands_comparison import (
     split_rands_comparison_cohort,
     write_rands_comparison_split_outputs,
 )
-from malweave.training.supervised import (
-    SupervisedRunRequest,
-    SupervisedTrainingError,
-    run_supervised_training,
-)
+from malweave.training.contracts import SupervisedTrainingError
 
 DEFAULT_RANDS_CONFIG = CONFIGS_DIR / "datasets" / "rands-raw-2026.yaml"
 DOTENV_PATH = PROJECT_ROOT / ".env"
@@ -74,16 +79,47 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     data = commands.add_parser("data", help="Inspect and prepare research datasets.")
     data_commands = data.add_subparsers(dest="data_command", required=True)
-    for operation in ("prepare", "download-plan", "extract", "run", "export", "verify"):
+    setup = data_commands.add_parser(
+        "sorel-setup", help="Fetch verified metadata and portable DiE."
+    )
+    setup.add_argument("--skip-metadata", action="store_true")
+    s3_check = data_commands.add_parser(
+        "sorel-s3-check", help="Check AWS identity, destination and optional text round trip."
+    )
+    s3_check.add_argument("--s3-prefix")
+    s3_check.add_argument(
+        "--write-test", action="store_true", help="Upload/download/delete a tiny text probe."
+    )
+    for operation in (
+        "prepare",
+        "download-plan",
+        "extract",
+        "run",
+        "export",
+        "verify",
+        "status",
+        "restore",
+        "checkpoint",
+    ):
         sorel = data_commands.add_parser(
             f"sorel-{operation}", help=f"SOREL preparation: {operation}."
         )
+        sorel.add_argument("--config", type=Path)
+        sorel.add_argument("--job-dir", type=Path)
         sorel.add_argument(
-            "--config", type=Path, default=CONFIGS_DIR / "datasets" / "sorel-pilot.yaml"
+            "--s3-prefix", help="Collection S3 root; defaults to MALWEAVE_SOREL_S3_PREFIX."
         )
-        sorel.add_argument("--job-dir", type=Path, required=True)
+        sorel.add_argument(
+            "--part",
+            type=int,
+            choices=range(1, 6),
+            metavar="1..5",
+            help="Use the fixed full-corpus partition and its default job directory.",
+        )
         if operation in ("prepare", "run"):
-            sorel.add_argument("--metadata", type=Path, required=operation == "prepare")
+            sorel.add_argument(
+                "--metadata", type=Path, default=PROJECT_ROOT / "data/raw/sorel/metadata/meta.db"
+            )
         if operation in ("extract", "run"):
             sorel.add_argument(
                 "--staged",
@@ -91,8 +127,103 @@ def _parser() -> argparse.ArgumentParser:
                 help="Read the planned curl batch, deleting compressed inputs after commit.",
             )
             sorel.add_argument("--limit", type=int, default=None)
+            sorel.add_argument(
+                "--progress-seconds",
+                type=float,
+                default=5,
+                help="Heartbeat interval while waiting; also report every committed source.",
+            )
+    container = data_commands.add_parser(
+        "sorel-container", help="Launch the frozen CPU Docker worker."
+    )
+    container.add_argument("action", choices=("benchmark", "run", "status", "export"))
+    container.add_argument("--part", type=int, choices=range(1, 6), default=1)
+    container.add_argument("--image", default="malweave-sorel:v3")
+    container.add_argument(
+        "--metadata", type=Path, default=PROJECT_ROOT / "data/raw/sorel/metadata/meta.db"
+    )
+    container.add_argument("--job-dir", type=Path)
+    container.add_argument("--workers", type=int)
+    container.add_argument("--limit", type=int)
+    container.add_argument("--takeover")
+    convert = data_commands.add_parser(
+        "sorel-convert", help="Approved v3 consecutive-part conversion."
+    )
+    convert.add_argument("action", choices=("run", "benchmark", "status", "export", "audit"))
+    convert.add_argument("--part", type=int, choices=range(1, 6), default=1)
+    convert.add_argument("--config", type=Path, default=CONFIGS_DIR / "datasets/sorel-full.yaml")
+    convert.add_argument("--job-dir", type=Path)
+    convert.add_argument(
+        "--metadata", type=Path, default=PROJECT_ROOT / "data/raw/sorel/metadata/meta.db"
+    )
+    convert.add_argument("--s3-prefix", help="Collection root; /v3.1/part-NN is appended.")
+    convert.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Retain outputs locally; publication is not benchmarked.",
+    )
+    convert.add_argument("--limit", type=int)
+    convert.add_argument("--workers", type=int)
+    convert.add_argument(
+        "--takeover",
+        metavar="OLD_OWNER_TOKEN",
+        help="Use only after verifying the previous coordinator stopped.",
+    )
+    convert.add_argument(
+        "--retry",
+        nargs="+",
+        metavar="STATUS",
+        help="Explicitly retry failed/deferred groups, preserving history.",
+    )
     experiment = commands.add_parser("experiment", help="Freeze and run declared experiments.")
     experiment_commands = experiment.add_subparsers(dest="experiment_command", required=True)
+
+    scratch_config = CONFIGS_DIR / "experiments/rands-exe-scratch.yaml"
+    rands_check = experiment_commands.add_parser(
+        "rands-check", help="Check RanDS input permissions and training output storage."
+    )
+    rands_check.add_argument("--write-test", action="store_true")
+    scratch_data = PROJECT_ROOT / "data/processed/rands-scratch/inputs"
+    prepare = experiment_commands.add_parser(
+        "rands-prepare", help="Fetch EXE only, hash, quarantine and freeze RanDS splits."
+    )
+    prepare.add_argument("--config", type=Path, default=scratch_config)
+    prepare.add_argument("--data-dir", type=Path, default=scratch_data)
+    prepare.add_argument(
+        "--download",
+        action="store_true",
+        help="Download EXE and the two metadata CSVs from private S3 settings.",
+    )
+    prepare.add_argument("--exe-prefix", help="Defaults to MALWEAVE_RANDS_EXE_S3_PREFIX.")
+    prepare.add_argument(
+        "--metadata-prefix", help="Defaults to MALWEAVE_RANDS_METADATA_S3_PREFIX."
+    )
+    prepare.add_argument("--hash-workers", type=int, default=4)
+    scratch = experiment_commands.add_parser(
+        "rands-train", help="Train RanDS EXE from random weights, with durable resume."
+    )
+    scratch.add_argument("--config", type=Path, default=scratch_config)
+    scratch.add_argument("--data-dir", type=Path, default=scratch_data)
+    scratch.add_argument(
+        "--runs-dir", type=Path, default=PROJECT_ROOT / "data/processed/rands-scratch/runs"
+    )
+    scratch.add_argument("--run-id", required=True)
+    scratch.add_argument("--device", default="cuda:0")
+    scratch.add_argument("--resume", action="store_true")
+    scratch.add_argument(
+        "--max-steps",
+        type=int,
+        help="Stop at this total optimizer-update count, saving a resumable checkpoint.",
+    )
+    scratch.add_argument(
+        "--s3-prefix",
+        help="Defaults to MALWEAVE_RANDS_TRAIN_S3_PREFIX; optional remote checkpoints.",
+    )
+    scratch_smoke = experiment_commands.add_parser(
+        "rands-smoke", help="Synthetic EXE-only BPE/train/checkpoint/evaluation smoke; no S3."
+    )
+    scratch_smoke.add_argument("--work-dir", type=Path, required=True)
+    scratch_smoke.add_argument("--device", default="cuda:0")
 
     inspect = data_commands.add_parser("inspect", help="Audit a local dataset without mutation.")
     inspect.add_argument("--dataset", choices=("rands",), required=True)
@@ -450,14 +581,181 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_project_environment()
 
     try:
+        if args.command == "data" and args.data_command == "sorel-setup":
+            from malweave.data.sorel_setup import setup_sorel
+
+            print(json.dumps(setup_sorel(PROJECT_ROOT, metadata=not args.skip_metadata), indent=2))
+            return 0
+        if args.command == "data" and args.data_command == "sorel-s3-check":
+            from malweave.data.sorel_s3 import check_sorel_s3
+
+            prefix = args.s3_prefix or os.environ.get("MALWEAVE_SOREL_S3_PREFIX")
+            if not prefix:
+                raise SorelError("Set MALWEAVE_SOREL_S3_PREFIX or pass --s3-prefix.")
+            print(json.dumps(check_sorel_s3(prefix, write_test=args.write_test), indent=2))
+            return 0
+        if args.command == "data" and args.data_command == "sorel-container":
+            from malweave.data.sorel_container import launch
+
+            prefix = os.environ.get("MALWEAVE_SOREL_S3_PREFIX")
+            if not prefix:
+                raise SorelError("Set MALWEAVE_SOREL_S3_PREFIX in .env before launching Docker")
+            return launch(
+                args.action,
+                args.part,
+                args.image,
+                args.metadata,
+                args.job_dir
+                or PROJECT_ROOT / "data/processed/sorel/v3.1" / f"part-{args.part:02d}",
+                prefix=prefix,
+                workers=args.workers,
+                limit=args.limit,
+                takeover=args.takeover,
+            )
+        if args.command == "data" and args.data_command == "sorel-convert":
+            from contextlib import closing
+
+            from malweave.data import sorel_conversion as conversion
+            from malweave.data import sorel_protocol as protocol
+            from malweave.data.sorel_io import job_lock
+
+            job = (
+                args.job_dir
+                or PROJECT_ROOT / "data/processed/sorel/v3.1" / f"part-{args.part:02d}"
+            )
+            rules, runtime = protocol.load(args.config, part=args.part)
+            if args.workers is not None:
+                if args.workers < 1:
+                    raise SorelError("--workers must be positive")
+                runtime = replace(runtime, workers=args.workers)
+            prefix = (
+                None
+                if args.local_only
+                else (args.s3_prefix or os.environ.get("MALWEAVE_SOREL_S3_PREFIX"))
+            )
+            if prefix:
+                prefix = prefix.rstrip("/") + f"/v3.1/part-{args.part:02d}"
+            portable = (
+                PROJECT_ROOT / "data/external/tools/die-portable-3.21/die_linux_portable/base"
+            )
+            if not __import__("shutil").which("diec") and (portable / "diec").exists():
+                os.environ["PATH"] = str(portable) + os.pathsep + os.environ.get("PATH", "")
+                os.environ["LD_LIBRARY_PATH"] = (
+                    str(portable) + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
+                )
+            if args.action == "status":
+                result = conversion.status(job)
+            elif args.action == "audit":
+                with job_lock(job):
+                    result = conversion.audit(job)
+                    if result["full_launch_ready"] and prefix:
+                        from uuid import uuid4
+
+                        from malweave.data.sorel_publication import AWS
+                        from malweave.data.sorel_tools import Processes
+
+                        aws = AWS(job, Processes(), runtime.upload_timeout_seconds)
+                        owner = {
+                            "schema": 3,
+                            "token": uuid4().hex,
+                            "purpose": "release-audit",
+                            "started_at_utc": protocol.now(),
+                        }
+                        etag = aws.acquire(prefix, owner, args.takeover)
+                        aws.put(job / "release-audit.json", prefix + "/main/release-audit.json")
+                        aws.put(
+                            job / "release-audit.json",
+                            prefix.rsplit("/part-", 1)[0] + "/main/release-audit.json",
+                        )
+                        aws.release(prefix, etag)
+            elif args.action == "export":
+                with job_lock(job), closing(protocol.connect(job)) as db:
+                    protocol.csv_export(db, job / "results.csv")
+                result = {"csv": str(job / "results.csv")}
+            else:
+                if not prefix and not args.local_only:
+                    raise SorelError(
+                        "Set MALWEAVE_SOREL_S3_PREFIX or explicitly choose --local-only"
+                    )
+                result = conversion.run(
+                    job,
+                    args.metadata,
+                    rules,
+                    runtime,
+                    prefix=prefix,
+                    limit=1000 if args.action == "benchmark" else args.limit,
+                    takeover=args.takeover,
+                    retry=args.retry,
+                    benchmark=args.action == "benchmark",
+                )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0 if args.action != "audit" or result["full_launch_ready"] else 1
         if args.command == "data" and args.data_command.startswith("sorel-"):
+            if args.part is not None:
+                args.job_dir = args.job_dir or (
+                    PROJECT_ROOT / "data/processed/sorel/full" / f"part-{args.part:02d}"
+                )
+            if args.job_dir is None:
+                raise SorelError("Pass --part 1..5 or --job-dir.")
+            s3_prefix = args.s3_prefix or os.environ.get("MALWEAVE_SOREL_S3_PREFIX")
+            if s3_prefix and args.part is not None:
+                s3_prefix = s3_prefix.rstrip("/") + f"/part-{args.part:02d}"
+            if args.data_command == "sorel-restore":
+                from malweave.data.sorel_archive import restore
+                from malweave.data.sorel_io import job_lock
+
+                if not s3_prefix:
+                    raise SorelError("Set MALWEAVE_SOREL_S3_PREFIX or pass --s3-prefix.")
+                with job_lock(args.job_dir):
+                    restore(args.job_dir, s3_prefix)
+                print(json.dumps({"restored": True, "job_dir": str(args.job_dir)}))
+                return 0
+            if args.data_command == "sorel-checkpoint":
+                from contextlib import closing
+
+                from malweave.data import sorel_ledger
+                from malweave.data.sorel_archive import SorelArchive
+                from malweave.data.sorel_io import job_lock
+
+                saved_config = json.loads((args.job_dir / "selection.json").read_text())["config"]
+                from malweave.data.sorel import SorelConfig
+
+                remote = args.job_dir / "remote.json"
+                s3_prefix = s3_prefix or (
+                    json.loads(remote.read_text())["prefix"] if remote.exists() else None
+                )
+                if not s3_prefix:
+                    raise SorelError("Set MALWEAVE_SOREL_S3_PREFIX or pass --s3-prefix.")
+                with (
+                    job_lock(args.job_dir),
+                    closing(sorel_ledger.connect(args.job_dir / "state.sqlite")) as db,
+                ):
+                    store = SorelArchive(args.job_dir, s3_prefix, SorelConfig(**saved_config))
+                    store.flush(db)
+                    store.checkpoint(db)
+                print(json.dumps({"checkpointed": True, "job_dir": str(args.job_dir)}))
+                return 0
+            if args.data_command == "sorel-status":
+                from malweave.data.sorel_partitions import part_status
+
+                print(json.dumps(part_status(args.job_dir), indent=2, sort_keys=True))
+                return 0
             if args.data_command == "sorel-export":
                 print(json.dumps(export_sorel(args.job_dir), indent=2, sort_keys=True))
                 return 0
             if args.data_command == "sorel-verify":
                 print(json.dumps(verify_sorel(args.job_dir), indent=2, sort_keys=True))
                 return 0
-            config = load_sorel_config(args.config)
+            config = load_sorel_config(
+                args.config
+                or CONFIGS_DIR
+                / "datasets"
+                / ("sorel-full.yaml" if args.part is not None else "sorel-pilot.yaml")
+            )
+            if args.part is not None:
+                if config.partition_count != 5 or config.samples != 0:
+                    raise SorelError("--part requires samples: 0 and partition_count: 5.")
+                config = replace(config, partition_index=args.part)
             if args.data_command == "sorel-prepare":
                 summary = prepare_sorel(args.metadata, args.job_dir, config)
             elif args.data_command == "sorel-download-plan":
@@ -465,12 +763,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 if (
                     args.data_command == "sorel-run"
+                    and s3_prefix
+                    and not (args.job_dir / "selection.json").exists()
+                ):
+                    from malweave.data.sorel_archive import restore
+                    from malweave.data.sorel_io import job_lock
+
+                    with job_lock(args.job_dir):
+                        restore(args.job_dir, s3_prefix, missing_ok=True)
+                if (
+                    args.data_command == "sorel-run"
                     and not (args.job_dir / "selection.json").exists()
                 ):
                     if args.metadata is None:
                         raise SorelError("A new job requires --metadata; resuming does not.")
                     prepare_sorel(args.metadata, args.job_dir, config)
-                summary = run_sorel(args.job_dir, config, staged=args.staged, limit=args.limit)
+                summary = run_sorel(
+                    args.job_dir,
+                    config,
+                    staged=args.staged,
+                    limit=args.limit,
+                    progress_seconds=args.progress_seconds,
+                    s3_prefix=s3_prefix,
+                )
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
         if args.command == "data" and args.data_command == "inspect":
@@ -582,6 +897,61 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
+        if args.command == "experiment" and args.experiment_command == "rands-check":
+            prefixes = [
+                os.environ.get(name)
+                for name in [
+                    "MALWEAVE_RANDS_EXE_S3_PREFIX",
+                    "MALWEAVE_RANDS_METADATA_S3_PREFIX",
+                    "MALWEAVE_RANDS_TRAIN_S3_PREFIX",
+                ]
+            ]
+            if not all(prefixes):
+                raise RandsTrainingError("Set all three RanDS S3 prefixes in the private .env.")
+            print(json.dumps(check_storage(*prefixes, write_test=args.write_test), indent=2))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "rands-prepare":
+            if args.hash_workers < 1:
+                raise RandsTrainingError("hash-workers must be positive.")
+            with Progress() as progress:
+                if args.download:
+                    exe_prefix = args.exe_prefix or os.environ.get("MALWEAVE_RANDS_EXE_S3_PREFIX")
+                    metadata_prefix = args.metadata_prefix or os.environ.get(
+                        "MALWEAVE_RANDS_METADATA_S3_PREFIX"
+                    )
+                    if not exe_prefix or not metadata_prefix:
+                        raise RandsTrainingError(
+                            "Set the EXE and metadata S3 prefixes in .env or CLI arguments."
+                        )
+                    fetch_exe(args.data_dir, exe_prefix, metadata_prefix, progress)
+                result = prepare_exe(
+                    args.data_dir, args.config, hash_workers=args.hash_workers, progress=progress
+                )
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "rands-smoke":
+            from malweave.training.scratch_smoke import smoke
+
+            print(json.dumps(smoke(args.work_dir, device=args.device), indent=2))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "rands-train":
+            from malweave.training.scratch import ScratchRequest, run_scratch
+
+            result = run_scratch(
+                ScratchRequest(
+                    config=args.config,
+                    data=args.data_dir,
+                    runs=args.runs_dir,
+                    run_id=args.run_id,
+                    device=args.device,
+                    resume=args.resume,
+                    max_steps=args.max_steps,
+                    s3_prefix=args.s3_prefix or os.environ.get("MALWEAVE_RANDS_TRAIN_S3_PREFIX"),
+                    command=" ".join(("malweave", *(argv if argv is not None else sys.argv[1:]))),
+                )
+            )
+            print(json.dumps(result, indent=2))
+            return 0
         if args.command == "experiment" and args.experiment_command == "freeze-rands-comparison":
             split_config = load_rands_comparison_config(args.experiment)
             products = load_rands_product_manifest(args.products)
@@ -598,6 +968,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
         if args.command == "experiment" and args.experiment_command == "train":
+            from malweave.training.supervised import SupervisedRunRequest, run_supervised_training
+
             result = run_supervised_training(
                 SupervisedRunRequest(
                     track=args.track,
@@ -616,9 +988,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(result["metrics"], indent=2, sort_keys=True))
             return 0
+    except ModuleNotFoundError as error:
+        if (error.name or "").split(".")[0] not in {"torch", "tokenizers", "transformers"}:
+            raise
+        print(
+            "error: Training dependencies are not installed. Run training commands with "
+            "uv run --locked --no-default-groups --group train malweave ...",
+            file=sys.stderr,
+        )
+        return 2
     except KeyboardInterrupt:
         print(
-            "interrupted: durable state was preserved; rerun the same command with --resume.",
+            "interrupted: durable state was preserved; rerun the same command "
+            "(add --resume only if that command supports it).",
             file=sys.stderr,
         )
         return 130
@@ -632,6 +1014,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RandsProductError,
         RandsComparisonError,
         SupervisedTrainingError,
+        RandsTrainingError,
         OSError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)

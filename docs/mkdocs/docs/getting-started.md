@@ -1,6 +1,16 @@
-# Getting Started
+# Getting started
 
-## 1. Set Up The Environment
+## Read the plan
+
+Start with the [research overview](workflows/research-protocol.md) and the
+[LMLM checkpoint plan](workflows/lmlm-checkpoints.md), the current priority.
+Its detailed design is pending; there is no validated checkpoint fine-tuning command yet.
+
+The [self-pretraining direction](workflows/self-pretraining.md) is paused.
+SOREL conversion and RanDS scratch guides document retained workflows, not immediate tasks.
+Read the [RanDS card](datasets/rands.md) for downstream data facts.
+
+## Set up development
 
 Install uv **0.11.9**, then run from the repository root:
 
@@ -9,32 +19,18 @@ uv sync --locked
 make check
 ```
 
-Canonical CPython is **3.12.12**; supported Python is 3.10–3.12 on Linux/macOS. Windows is
-unsupported. uv creates `.venv`; Make uses the locked environment without shell activation.
-Add dependencies through uv; see the [environment policy](development/environment.md).
-Validate GPU/native Mamba compatibility on the target training runtime.
+Canonical CPython is **3.12.12**; supported Python is 3.10–3.12 on Linux/macOS.
+uv creates `.venv`; activation is optional. See the
+[environment policy](development/environment.md) for dependencies and native GPU limitations.
+Synthetic development needs no corpus download.
 
-## 2. Read The Research And Data Plan
+Private data, credentials and checkpoints stay outside Git. If local configuration is needed,
+copy `.env.example` only when `.env` does not exist. The CLI preserves exported variables;
+explicit CLI paths take precedence. SOREL has separate path limitations documented in
+the environment guide.
 
-Start with the [research protocol](workflows/research-protocol.md),
-[data preparation](workflows/data-preparation.md) and [workstreams](workflows/research-workstreams.md).
+## Make a scoped change
 
-**RanDS has been converted to EXE and uploaded to S3.** The next data tasks are SOREL/Assemblage
-selection, readers and conversion, followed by cross-source overlap checks and experiment-view preparation.
-Read the [dataset cards](datasets/index.md) for source-specific schemas and identity rules.
-
-Private data, metadata, inventories, EXE bytes and checkpoints stay outside Git. Configure
-`MALWEAVE_DATA_DIR`, `MALWEAVE_MODELS_DIR` and `MALWEAVE_REPORTS_DIR` for the target storage layout.
-Actual S3 locations/credentials belong in private configuration. An EXE-only storage/manifest
-interface is part of the planned implementation; current CLI dataset adapters support RanDS.
-
-If local configuration is needed, copy `.env.example` to `.env` only when `.env` does not exist.
-The CLI loads it on execution; exported shell/CI values take precedence, then explicit CLI roots
-take highest precedence. Synthetic component development needs no corpus mount.
-
-## 3. Implement A Scoped Task
-
-Use [model components](workflows/model-components.md), [onboarding](onboarding.md) and
-[project structure](project-structure.md) for code placement and task boundaries.
-Develop data adapters and MLM components alongside one another, then connect them through a
-frozen experiment config. Run focused synthetic tests and `make check` before handoff.
+Use [onboarding](onboarding.md) and [project structure](project-structure.md).
+Existing components are not proof of checkpoint compatibility.
+Run appropriate synthetic checks and `make check` before handoff.

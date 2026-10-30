@@ -22,7 +22,15 @@ def connect(path: Path) -> sqlite3.Connection:
             category TEXT, name TEXT, value REAL NOT NULL, PRIMARY KEY(category, name));
         CREATE TABLE IF NOT EXISTS outputs (digest TEXT PRIMARY KEY, size INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS contract (value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS archives (
+            digest TEXT PRIMARY KEY, uri TEXT NOT NULL, sources TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS archive_sources (id TEXT PRIMARY KEY, archive TEXT NOT NULL);
     """)
+    if "archived" not in {row[1] for row in connection.execute("PRAGMA table_info(sources)")}:
+        connection.execute("ALTER TABLE sources ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS publication_queue ON sources(done, archived, id)"
+    )
     return connection
 
 

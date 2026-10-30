@@ -17,14 +17,36 @@ malweave/                Importable, testable implementation
   experiments/           Benchmark cohorts, leakage groups and splits
   models/                Architectures and checkpoint interfaces
   training/              Orchestration and training loops
-  evaluation/            Metrics and benchmark protocols
-  utils/                 Small shared helpers
+  evaluation/            Reserved package for shared evaluation code
+  utils/                 Reserved package for shared utilities
 models/                  Local checkpoints, tokenizers, predictions; Git-ignored
 notebooks/               Ordered exploratory work
 references/              Small, redistributable reference material
 reports/                 Local generated reports and figures; Git-ignored
 tests/                   Automated tests for reusable behavior
 ```
+
+## Existing code capabilities
+
+These describe implementation, not completed experiments or checkpoint compatibility.
+The [checkpoint plan](workflows/lmlm-checkpoints.md) owns current research decisions;
+[self-pretraining](workflows/self-pretraining.md) is paused.
+
+| Location | Current scope and limitations |
+| --- | --- |
+| `cli.py` | Shared data/experiment CLI; no validated public-LMLM-checkpoint fine-tuning command yet. |
+| `data/sorel_*.py` | Conversion, selection, DiE/LIEF evidence, bounded dispatch, publication, locks and resume. v3.1 is the retained workflow; pilot/round-robin interfaces are legacy. |
+| `data/rands*.py`, `data/pe_*.py` | RanDS audit, EXE extraction, provenance and architecture/packing assessment; scratch preparation also implements EXE acquisition, grouping and splits. |
+| `data/byte_inputs.py` | RAW byte IDs, reversible EXE mapping, BPE and batching; does not establish compatibility with a released tokenizer. |
+| `models/` | BiMamba, HRRFormer and MalConvGCT sequence classifiers with synthetic tests. Optional HRR padding masking exists. BiMamba native CUDA compatibility is unverified. |
+| `training/` | Supervised RAW/EXE runner and independent scratch orchestration, token cache, metrics, checkpoints, local/S3 resume and smoke tests. |
+| `experiments/` | RanDS cohort, duplicate-group and split builders; their policies are not automatically the checkpoint protocol. |
+| `evaluation/`, `utils/` | Reserved packages; no separate implementation yet. |
+| `Dockerfile.sorel`, `scripts/`, `ghidra_scripts/` | Retained CPU conversion image, source bundling and optional Ghidra DIS/DEC tooling. Runpod startup/SSH and registry work remain unfinished at handover. |
+
+End-to-end MLM pretraining and transfer are not implemented. Existing CPU
+forward/backward and resume tests do not establish native CUDA performance or released
+checkpoint loading. Ghidra/RAW alternatives remain tools, not additional research directions.
 
 ## Why These Boundaries Matter
 

@@ -2,13 +2,17 @@
 
 This directory records datasets considered for malware machine-learning research. Each dataset has its own page covering its contents, access method, loading steps, evaluation considerations, safety restrictions, and official references.
 
+The current priority is [released LMLM checkpoint evaluation on RanDS](../workflows/lmlm-checkpoints.md).
+SOREL/Assemblage acquisition belongs to [paused self-pretraining](../workflows/self-pretraining.md).
+The released checkpoints' actual pretraining data remain to be verified.
+
 ## Dataset Index
 
 | Dataset | Current role | Scope | Documentation |
 | --- | --- | --- | --- |
-| SOREL-20M | External MLM pretraining | Registered malware PE subset; no public raw benign | [SOREL-20M](sorel-20m.md) |
-| Assemblage | External MLM pretraining | Windows PE background software; project/build groups | [Assemblage](assemblage.md) |
-| RanDS | Downstream detection | EXE converted and uploaded to S3; ransomware vs benign | [RanDS](rands.md) |
+| SOREL-20M | Self-pretraining — paused | Registered malware PE subset; no public raw benign | [SOREL-20M](sorel-20m.md) |
+| Assemblage | Self-pretraining — paused | Windows PE background software; project/build groups | [Assemblage](assemblage.md) |
+| RanDS | Downstream evaluation for both directions | EXE converted and uploaded to S3; ransomware vs benign | [RanDS](rands.md) |
 
 ## Documentation Rules
 

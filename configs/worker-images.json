@@ -1,0 +1,8 @@
+{
+  "ubuntu": "ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac",
+  "uv": "ghcr.io/astral-sh/uv:0.11.9@sha256:6b6fa841d71a48fbc9e2c55651c5ad570e01104d7a7d701f57b2b22c0f58e9b1",
+  "aws_cli": {
+    "version": "2.34.45",
+    "sha256": "2b382fd5c1e8d73f6aaca18e5850758fb9f70a20af9c17deb3078df0dd4af095"
+  }
+}

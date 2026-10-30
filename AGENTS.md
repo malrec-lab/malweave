@@ -52,9 +52,15 @@
 
 - Read `docs/mkdocs/docs/datasets/rands.md` before changing RanDS handling.
 - Read `docs/mkdocs/docs/workflows/data-preparation.md` before changing PE/EXE data preparation.
-- Read `docs/mkdocs/docs/workflows/research-protocol.md` before changing the active external
-  PE/EXE pretraining and RanDS downstream protocol.
-- Read `docs/mkdocs/docs/workflows/research-workstreams.md` before planning a research task.
-  Keep data preparation, reusable components, and experiments independently scoped.
+- Read `docs/mkdocs/docs/workflows/research-protocol.md` and the relevant direction plan before
+  planning or changing research work. LMLM checkpoint fine-tuning/evaluation on RanDS is the
+  current priority; self-pretraining and its conversion/scratch workflows are paused.
+- Distinguish verified facts, researcher-approved choices and pending proposals. Existing code
+  or config is not scientific approval. Discuss new research choices before implementing them.
+- Keep plans in direction pages, commands in guides and measured results in execution notes.
+  Link to maintained content rather than creating duplicate status/report pages.
+- Remove obsolete documentation instead of archiving it. When continued relevance or decision
+  status is unclear, ask the researcher before keeping or removing it. Preserve results and
+  evidence that still support the two research directions.
 - Read `docs/mkdocs/docs/development/environment.md` before changing dependencies or supported
   Python/tool versions.

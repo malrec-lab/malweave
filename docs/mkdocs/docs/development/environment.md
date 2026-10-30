@@ -27,20 +27,47 @@ make docs-serve
 the lock, Ruff lint/format, pytest and strict MkDocs build. `make docs` builds without serving.
 Do not bypass lock checks or install undeclared packages with pip.
 
+## Retained SOREL conversion worker — paused
+
+This worker belongs to the [paused self-pretraining direction](../workflows/self-pretraining.md).
+The current priority is [LMLM checkpoints on RanDS](../workflows/lmlm-checkpoints.md);
+its exact model/runtime requirements remain unverified. Do not use the conversion image
+as an assumed checkpoint-training environment.
+
+If conversion resumes, no GPU or training packages are needed. The base environment is:
+
+```bash
+uv sync --locked --no-default-groups
+uv run --locked --no-default-groups malweave data sorel-setup
+```
+
+Keep `--no-default-groups` on subsequent conversion commands so uv does not install the
+default dev/train groups. The data CLI imports model code only for training commands.
+System `file`, curl, AWS CLI and portable DiE remain separate prerequisites; see
+the [SOREL run guide](../workflows/sorel-conversion.md).
+
 ## Local Storage Configuration
 
 Configure raw/EXE, model and report storage for the target environment following
 [data preparation](../workflows/data-preparation.md). RanDS EXE is stored on S3. The EXE-only
-manifest/storage interface is an implementation task. `.env.example` includes raw RanDS settings
+manifest/storage interface is available for the independent
+[scratch baseline](../workflows/rands-scratch.md). `.env.example` includes raw RanDS settings
 and optional Ghidra worker variables for the corresponding tools.
 
 Copy the template only if `.env` is absent. The CLI loads root `.env` at command execution,
 preserving exported shell/CI variables; explicit CLI roots override both. Library imports are
 side-effect free. `.env` and machine paths/credentials stay outside Git.
 
-`MALWEAVE_DATA_DIR`, `MALWEAVE_MODELS_DIR` and `MALWEAVE_REPORTS_DIR` relocate private artifact roots.
+Shared path constants use `MALWEAVE_DATA_DIR`, `MALWEAVE_MODELS_DIR` and
+`MALWEAVE_REPORTS_DIR` from the process environment. CLI-specific path options take
+precedence. **SOREL currently defaults to repository-local paths:** pass
+`--metadata` and `--job-dir` explicitly for a mounted volume; `sorel-setup` still
+writes metadata under the repository. Do not assume `MALWEAVE_DATA_DIR` relocates
+the SOREL CLI.
 Raw RanDS operations use `MALWEAVE_RANDS_DIR` and, when separate, `MALWEAVE_RANDS_METADATA_DIR`.
-These variables do not implement an S3 data loader. S3 references/credentials belong in private
+The retained, paused scratch commands use `MALWEAVE_RANDS_EXE_S3_PREFIX`,
+`MALWEAVE_RANDS_METADATA_S3_PREFIX` and optional `MALWEAVE_RANDS_TRAIN_S3_PREFIX`.
+S3 references/credentials belong in private
 storage records and the target environment, not committed configs.
 
 ## Dependency Groups

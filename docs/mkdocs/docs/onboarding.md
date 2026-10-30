@@ -1,8 +1,8 @@
 # Onboarding a Research Task
 
-MalWeave separates data preparation, reusable components, and declared experiments. Read the
-[research workstreams](workflows/research-workstreams.md) to identify which boundary a task owns;
-do not make unrelated work wait for a linear gate.
+Read the [research overview](workflows/research-protocol.md) and the relevant direction plan.
+LMLM checkpoint evaluation on RanDS is the current priority; self-pretraining is paused.
+Separate data preparation, reusable components and experiment decisions.
 
 ## Start With the Task Boundary
 
@@ -45,11 +45,14 @@ Use synthetic fixtures in all tests.
 | Regression tests | `tests/` mirroring source | Yes |
 | Checkpoints, predictions, reports | private artifact root | No |
 
-## Current Research Example
+## Research decisions and documentation
 
-Follow the [PE/EXE data workflow](workflows/data-preparation.md). RanDS has been converted to EXE
-and uploaded to S3. In the data workstream, implement SOREL/Assemblage adapters
-with synthetic inputs and source-specific identity rules. In the component workstream, add MLM
-and transfer smoke coverage to the existing Mamba/HRRFormer classifiers. The experiment workstream
-then freezes overlap-controlled views, splits, tokenizer fit and label subsets under the
-[research protocol](workflows/research-protocol.md).
+Use the relevant direction plan for verified findings, approved choices and pending proposals.
+An implemented default is not a researcher decision. Discuss new scientific choices before
+encoding them in experiment configs. Keep commands in workflow guides, measurements in
+execution notes and code capabilities in project structure; link rather than duplicate them.
+Do not create additional status/report pages for routine updates.
+
+The next research discussion concerns public LMLM checkpoint identity, model/tokenizer/input
+compatibility and RanDS fine-tuning/evaluation design. Do not launch conversion or add MLM
+work merely because the earlier self-pretraining plan described it.
