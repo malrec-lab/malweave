@@ -1,0 +1,52 @@
+# Original MalConvGCT implementation; agreed RanDS adaptations remain explicit.
+experiment:
+  dataset: rands
+  kind: benchmark
+  name: malconvgct-e1-metadata-round02
+  protocol: malconvgct_e1
+cohort:
+  eligibility: rands_metadata
+  arch: I386
+  packed: false
+  train_years: [2006, 2023]
+  validation_years: [2024, 2024]
+  test_years: [2025, 2025]
+  train_balance: fixed_random_undersampling
+  deduplication: exact_model_tokens_after_full_exe
+  seed: 0
+inputs:
+  raw:
+    max_bytes: null  # Entire original file; no implicit prefix cap.
+    encoding: {byte_offset: 1, bos_token_id: null, eos_token_id: null, pad_token_id: 0}
+runtime:
+  gradient_checkpointing: false
+supervision:
+  selection: {checkpoint: validation_roc_auc, threshold: argmax}
+  early_stopping: {patience: 3, min_delta: 0}
+  bootstrap: {replicates: 2000, confidence: 0.95, seed: 0}
+tracks:
+  malconvgct:
+    architecture:
+      implementation: original
+      vocab_size: 257
+      embedding_size: 8
+      channels: 256
+      stride: 64
+      kernel_size: 256
+      layers: 1
+      pad_token_id: 0
+      num_labels: 2
+      chunk_size: 65536
+      min_chunk_size: 1024
+    training:
+      epochs: 15
+      # Kaggle T4 sweep: microbatch 1, CLI --gradient-accumulation-steps 128.
+      batch_size: 1
+      effective_batch_size: 128
+      precision: fp32
+      optimizer:
+        learning_rate: 0.001
+        weight_decay: 0.01
+        betas: [0.9, 0.999]
+        epsilon: 1.0e-8
+      scheduler: {type: constant, warmup_ratio: 0.0, max_grad_norm: null}

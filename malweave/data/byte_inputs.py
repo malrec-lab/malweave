@@ -38,14 +38,20 @@ def raw_bytes_to_ids(content: bytes, max_bytes: int = 2_097_152) -> torch.Tensor
 
 
 def collate_raw_byte_ids(
-    examples: Sequence[tuple[torch.Tensor, int]], pad_token_id: int = RAW_PAD_TOKEN_ID
+    examples: Sequence[tuple[torch.Tensor, int]],
+    pad_token_id: int = RAW_PAD_TOKEN_ID,
+    *,
+    pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Prefix-pad no samples; only batch padding is added after the frozen truncation policy."""
     if not examples:
         raise LmlmInputError("Cannot collate an empty batch.")
     if any(ids.ndim != 1 for ids, _ in examples):
         raise LmlmInputError("RAW input IDs must be one-dimensional tensors.")
+    if type(pad_to_multiple_of) is not int or pad_to_multiple_of < 1:
+        raise LmlmInputError("pad_to_multiple_of must be a positive integer.")
     max_length = max(ids.numel() for ids, _ in examples)
+    max_length = (max_length + pad_to_multiple_of - 1) // pad_to_multiple_of * pad_to_multiple_of
     input_ids = torch.full((len(examples), max_length), pad_token_id, dtype=torch.long)
     labels = torch.empty(len(examples), dtype=torch.long)
     for index, (ids, label) in enumerate(examples):

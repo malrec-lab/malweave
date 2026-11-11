@@ -1,7 +1,7 @@
 # Ghidra lifting scripts
 
-> Optional DIS/DEC tooling, deferred from the active PE/EXE pretraining plan. Retained for
-> attribution, reproducibility and synthetic integration checks.
+> DIS/DEC extraction tooling. The researcher approved a separate RanDS extraction pool;
+> see the maintained [data workflow](../docs/mkdocs/docs/workflows/data-preparation.md).
 
 `Lifter.java`, `Disassembler.java`, `Decompiler.java`, and
 `SetAnalysisOptionsForDisassembly.java` are verbatim ports of the Ghidra scripts from

@@ -1,9 +1,10 @@
 # Research directions
 
-**Updated:** 2026-10-29.
+**Updated:** 2026-10-31.
 
 MalWeave retains two directions. The researcher has approved their scope and priority;
-detailed design for the checkpoint direction will be discussed after documentation cleanup.
+the initial checkpoint experiment protocol is now approved; implementation and validation
+remain pending as detailed in the checkpoint plan.
 
 | Direction | Purpose | Status and detailed plan |
 | --- | --- | --- |
@@ -41,5 +42,6 @@ Remove obsolete documentation; ask about unclear relevance instead of preserving
 
 The research workspace's `research-notes/lmlm/overview.md` is a reading index.
 Its data notes retain RanDS/SOREL results; they are not another active experiment plan.
-New checkpoint findings should be recorded only after inspection. No checkpoint run guide
-or experiment config is established yet.
+New checkpoint findings should be recorded only after inspection. The checkpoint workflow now includes the first metadata-round C config and commands;
+C has A100 native BF16 training/memory probes; full training and validation/test
+results remain pending.

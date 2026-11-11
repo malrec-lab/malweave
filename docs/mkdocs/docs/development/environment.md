@@ -78,7 +78,8 @@ storage records and the target environment, not committed configs.
 | `lint` | Ruff | Included by `dev` |
 | `docs` | MkDocs/tooling | Included by `dev` |
 | `train` | PyTorch, Transformers, Tokenizers | Included by `dev` |
-| `dev` | Includes all four groups above | Yes |
+| `gpu` | `train` plus official Mamba 2.2.4 / causal-conv1d 1.5.0.post8 CUDA wheels; Linux x86_64, Python 3.12, Torch 2.6 ABI | No |
+| `dev` | Includes test/lint/docs/train; excludes native GPU wheels | Yes |
 
 Use the narrowest group when changing dependencies:
 
@@ -103,9 +104,25 @@ are not installed by uv and are not blanket prerequisites for external-pretraini
 Use `file`/DiE when an explicitly scoped architecture/packing annotation requires them; record
 version, mode, timeout/error and unknown results independently from extraction.
 
-Ghidra DIS/DEC is outside the research plan. The corresponding scripts and synthetic
-`make e2e-ghidra` integration remain in the codebase. The current PE/EXE pipeline uses LIEF
-and does not require Ghidra or Java.
+RanDS DIS/DEC extraction is approved as a separate preparation task; see the
+[data workflow](../workflows/data-preparation.md#streaming-rands-ghidra-disdec).
+The scripts and synthetic `make e2e-ghidra` integration remain available. Ghidra/Java
+compatibility and the approved 16-worker schedule were measured in the bounded
+2026-11-02 pilot; the research workspace's data-preparation execution notes record
+results and limits. Full-corpus runtime, failure handling and storage still need review.
+The EXE pipeline uses LIEF and does not require Ghidra or Java.
+
+The local 2026-11-02 installation uses Ghidra 11.2.1 and Temurin JDK
+21.0.13+9 under ignored `data/external/tools/`. Both archives matched their
+official published SHA-256 values. Synthetic verification passed through the
+streaming runner for both DIS and DEC. Java runtimes without `bin/javac` are
+rejected before acquisition. The system Java installation is independent.
+Use these runtime roots for this installation (or the private `.env` settings):
+
+```bash
+export GHIDRA_ROOT="$PWD/data/external/tools/ghidra_11.2.1_PUBLIC"
+export JAVA_HOME="$PWD/data/external/tools/jdk-21.0.13+9"
+```
 
 ## GPU Reproducibility
 
@@ -113,6 +130,15 @@ The Python lock does not lock GPU drivers or all native libraries. Record OS/arc
 accelerator model/count, driver and CUDA/runtime, framework build/index, native kernels,
 precision/determinism, peak memory and throughput. Define a canonical container/system lock when
 needed. Validate Mamba native and fallback behavior on the selected runtime before a full run.
+
+The optional `gpu` group pins official CUDA-12/Torch-2.6, CXX11-ABI-false wheels for
+CPython 3.12 on Linux x86_64. Restore it on the worker with
+`uv sync --locked --python 3.12.12 --no-default-groups --group gpu`.
+Their download URLs and lock hashes are verified. On 2026-11-01 they passed native
+BF16 full fine-tuning at 65,536 synthetic tokens per file on A100 SXM4 80 GB,
+microbatch 8 with accumulation 8; microbatch 16 exceeded VRAM. Native BF16 requires
+compute capability 8.0 or newer. These measurements apply to the checkpoint C runtime;
+see the [checkpoint workflow](../workflows/lmlm-checkpoints.md) for scope and limits.
 
 Keep CPU quality checks separate from GPU smoke/performance checks. State numerical tolerances;
 exact equality across accelerators is not assumed.

@@ -79,6 +79,37 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     data = commands.add_parser("data", help="Inspect and prepare research datasets.")
     data_commands = data.add_subparsers(dest="data_command", required=True)
+    rands_die = data_commands.add_parser(
+        "rands-die", help="Stream S3 RanDS PEs through LMLM DiE checks with durable progress."
+    )
+    rands_die.add_argument("action", choices=("run", "status"))
+    rands_die.add_argument("--job-dir", type=Path, required=True)
+    rands_die.add_argument("--config", type=Path, default=DEFAULT_RANDS_CONFIG)
+    rands_die.add_argument(
+        "--s3-prefix", help="Raw PE root; defaults to MALWEAVE_RANDS_METADATA_S3_PREFIX."
+    )
+    rands_die.add_argument("--workers", type=int, default=10)
+    rands_die.add_argument("--die-command", default="diec")
+    rands_die.add_argument("--retry-seconds", type=float, default=60)
+    rands_die.add_argument("--limit", type=int)
+    rands_ghidra = data_commands.add_parser(
+        "rands-ghidra", help="Extract DIS/DEC from audited S3 RanDS PEs in 16-worker batches."
+    )
+    rands_ghidra.add_argument("action", choices=("run", "status"))
+    rands_ghidra.add_argument("--job-dir", type=Path, required=True)
+    rands_ghidra.add_argument("--die-job", type=Path)
+    rands_ghidra.add_argument("--config", type=Path, default=DEFAULT_RANDS_CONFIG)
+    rands_ghidra.add_argument("--analyze-headless", type=Path)
+    rands_ghidra.add_argument("--script-root", type=Path, default=SCRIPT_ROOT)
+    rands_ghidra.add_argument("--limit", type=int, help="Cap pending sources before batching.")
+    rands_ghidra.add_argument("--heap-mb", type=int, default=1024)
+    rands_ghidra.add_argument("--min-free-gib", type=float, default=5)
+    rands_ghidra.add_argument(
+        "--execution-mode",
+        choices=("separate", "shared-full"),
+        default="separate",
+        help="Experimental shared-full imports/analyzes once and runs both scripts in one JVM.",
+    )
     setup = data_commands.add_parser(
         "sorel-setup", help="Fetch verified metadata and portable DiE."
     )
@@ -324,6 +355,44 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="Aggregate split JSON; it deliberately omits sample identities.",
     )
+    cohort = experiment_commands.add_parser(
+        "freeze-rands-metadata", help="Freeze the metadata-filtered temporal RanDS cohort."
+    )
+    cohort.add_argument("--metadata-dir", type=Path, required=True)
+    cohort.add_argument("--exe-manifest", type=Path, required=True)
+    cohort.add_argument("--experiment", type=Path, required=True)
+    cohort.add_argument("--output-dir", type=Path, required=True)
+    cohort.add_argument(
+        "--input-audit",
+        type=Path,
+        required=True,
+        help="Complete private exact-token audit directory.",
+    )
+    stage = experiment_commands.add_parser(
+        "stage-rands-exe", help="Download and verify only EXEs in a frozen cohort."
+    )
+    stage.add_argument("--split-manifest", type=Path, required=True)
+    stage.add_argument("--exe-root", type=Path, required=True)
+    stage.add_argument("--workers", type=int, default=8)
+    original_smoke = experiment_commands.add_parser(
+        "prepare-e1-smoke", help="Generate original MalConvGCT synthetic capacity/recovery inputs."
+    )
+    original_smoke.add_argument("--output-dir", type=Path, required=True)
+    original_smoke.add_argument("--sample-bytes", type=int, default=4096)
+    original_smoke.add_argument("--tiny-model", action="store_true")
+    smoke = experiment_commands.add_parser(
+        "prepare-e2-smoke", help="Generate synthetic non-PE E2 benchmark/recovery inputs."
+    )
+    smoke.add_argument("--output-dir", type=Path, required=True)
+    smoke.add_argument("--max-tokens", type=int, default=4096)
+    smoke.add_argument(
+        "--full-length",
+        action="store_true",
+        help="Distinct deterministic synthetic bytes; every input reaches the token limit.",
+    )
+    smoke.add_argument(
+        "--tiny-model", action="store_true", help="Small CPU regression model only."
+    )
     train = experiment_commands.add_parser(
         "train",
         help="Train one declared supervised track from a frozen private split.",
@@ -331,14 +400,55 @@ def _parser() -> argparse.ArgumentParser:
     train.add_argument("--track", choices=("malconvgct", "hrrformer", "mamba"), required=True)
     train.add_argument("--split-manifest", type=Path, required=True)
     train.add_argument("--experiment", type=Path, required=True)
-    train.add_argument("--raw-root", type=Path, required=True)
+    train.add_argument("--raw-root", type=Path, help="Required for the RAW malconvgct track.")
     train.add_argument("--exe-root", type=Path, required=True)
     train.add_argument("--artifact-root", type=Path, required=True)
     train.add_argument("--run-id", required=True)
     train.add_argument("--device", required=True, help="Explicit torch device, e.g. cuda:0.")
     train.add_argument("--gradient-accumulation-steps", type=int, required=True)
     train.add_argument("--seed", type=int, required=True)
+    evaluate_a = experiment_commands.add_parser(
+        "evaluate-a",
+        help="Evaluate the intact released detector on frozen RanDS test; no training.",
+    )
+    evaluate_a.add_argument("--experiment", type=Path, required=True)
+    evaluate_a.add_argument("--checkpoint", type=Path, required=True)
+    evaluate_a.add_argument("--split-manifest", type=Path, required=True)
+    evaluate_a.add_argument("--exe-root", type=Path, required=True)
+    evaluate_a.add_argument("--output-dir", type=Path, required=True)
+    evaluate_a.add_argument("--device", required=True)
+    evaluate_a.add_argument("--resume", action="store_true")
+    evaluate_a.add_argument(
+        "--max-samples", type=int, help="Pause after this many new predictions."
+    )
+    evaluate_a.add_argument(
+        "--max-seconds", type=float, help="Pause after a committed prediction."
+    )
+    probe_a = experiment_commands.add_parser(
+        "probe-a", help="Measure intact-detector FP32 capacity on synthetic bytes/tokens only."
+    )
+    probe_a.add_argument("--checkpoint", type=Path, required=True)
+    probe_a.add_argument("--output-dir", type=Path, required=True)
+    probe_a.add_argument("--device", default="cuda:0")
+    train.add_argument(
+        "--resume", action="store_true", help="Resume last committed training state."
+    )
+    train.add_argument(
+        "--max-updates",
+        type=int,
+        help="Pause at this total update count without evaluating test; preserve full schedule.",
+    )
+    train.add_argument(
+        "--max-seconds",
+        type=float,
+        help="E1/E2: pause after an optimizer update when this session budget is reached.",
+    )
     train.add_argument("--raw-samples-dir", default="dataset")
+    train.add_argument(
+        "--checkpoint",
+        type=Path,
+        help="Released EXE BiMamba MLM checkpoint; requires an explicit finetuning config.",
+    )
     extract_exe.add_argument(
         "--representation-dir",
         type=Path,
@@ -434,7 +544,7 @@ def _parser() -> argparse.ArgumentParser:
         nargs="+",
         choices=("dis", "dec"),
         required=True,
-        help="Representations to extract in one Ghidra pass; choose dis, dec, or both.",
+        help="Representations in one job, with a separate headless run per view: dis, dec, or both.",
     )
     extract_ghidra.add_argument(
         "--analyze-headless",
@@ -581,6 +691,59 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_project_environment()
 
     try:
+        if args.command == "data" and args.data_command == "rands-ghidra":
+            if args.action == "status":
+                print((args.job_dir / "progress.json").read_text())
+                return 0
+            from malweave.data.rands_ghidra_stream import run_rands_ghidra
+
+            headless = args.analyze_headless
+            if headless is None and os.environ.get("GHIDRA_ROOT"):
+                headless = Path(os.environ["GHIDRA_ROOT"]) / "support/analyzeHeadless"
+            if headless is None or args.die_job is None:
+                raise SorelError("Pass --die-job and --analyze-headless (or set GHIDRA_ROOT).")
+            result = run_rands_ghidra(
+                args.job_dir,
+                args.die_job,
+                load_rands_dataset_config(args.config),
+                headless,
+                script_root=args.script_root,
+                limit=args.limit,
+                heap_mb=args.heap_mb,
+                min_free_bytes=int(args.min_free_gib * 1024**3),
+                execution_mode=args.execution_mode,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 1 if any(v["failed"] for v in result["representations"].values()) else 0
+        if args.command == "data" and args.data_command == "rands-die":
+            if args.action == "status":
+                print((args.job_dir / "progress.json").read_text())
+                return 0
+            from malweave.data.rands_die import run_rands_die
+
+            prefix = args.s3_prefix or os.environ.get("MALWEAVE_RANDS_METADATA_S3_PREFIX")
+            if not prefix:
+                raise SorelError("Set MALWEAVE_RANDS_METADATA_S3_PREFIX or pass --s3-prefix.")
+            portable = (
+                PROJECT_ROOT / "data/external/tools/die-portable-3.21/die_linux_portable/base"
+            )
+            die_command = args.die_command
+            if die_command == "diec" and (portable / "diec").is_file():
+                die_command = str(portable / "diec")
+                os.environ["LD_LIBRARY_PATH"] = (
+                    str(portable) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+                )
+            result = run_rands_die(
+                args.job_dir,
+                load_rands_dataset_config(args.config),
+                prefix,
+                workers=args.workers,
+                die_command=die_command,
+                retry_seconds=args.retry_seconds,
+                limit=args.limit,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 1 if result["failed"] else 0
         if args.command == "data" and args.data_command == "sorel-setup":
             from malweave.data.sorel_setup import setup_sorel
 
@@ -967,15 +1130,83 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
+        if args.command == "experiment" and args.experiment_command == "freeze-rands-metadata":
+            from malweave.data.rands_cohort import freeze_metadata_cohort
+
+            result = freeze_metadata_cohort(
+                args.metadata_dir,
+                args.exe_manifest,
+                args.experiment,
+                args.output_dir,
+                input_audit=args.input_audit,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "stage-rands-exe":
+            from malweave.data.rands_cohort import stage_cohort_exe
+
+            result = stage_cohort_exe(
+                args.split_manifest,
+                args.exe_root,
+                os.environ.get("MALWEAVE_RANDS_EXE_S3_PREFIX", ""),
+                args.workers,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "prepare-e1-smoke":
+            from malweave.training.e2_smoke import prepare_e1_smoke
+
+            result = prepare_e1_smoke(
+                args.output_dir, sample_bytes=args.sample_bytes, tiny_model=args.tiny_model
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "prepare-e2-smoke":
+            from malweave.training.e2_smoke import prepare_e2_smoke
+
+            result = prepare_e2_smoke(
+                args.output_dir,
+                max_tokens=args.max_tokens,
+                tiny_model=args.tiny_model,
+                full_length=args.full_length,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "probe-a":
+            from malweave.evaluation.lmlm_a import probe_a
+
+            result = probe_a(args.checkpoint, args.output_dir, device_name=args.device)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "experiment" and args.experiment_command == "evaluate-a":
+            from malweave.evaluation.lmlm_a import ARequest, run_a
+
+            result = run_a(
+                ARequest(
+                    config_path=args.experiment,
+                    checkpoint_path=args.checkpoint,
+                    split_manifest_path=args.split_manifest,
+                    exe_root=args.exe_root,
+                    output_dir=args.output_dir,
+                    device=args.device,
+                    resume=args.resume,
+                    max_samples=args.max_samples,
+                    max_seconds=args.max_seconds,
+                )
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 1 if result["phase"] == "failed" else 0
         if args.command == "experiment" and args.experiment_command == "train":
             from malweave.training.supervised import SupervisedRunRequest, run_supervised_training
 
+            if args.track == "malconvgct" and args.raw_root is None:
+                raise SupervisedTrainingError("--raw-root is required for malconvgct.")
             result = run_supervised_training(
                 SupervisedRunRequest(
                     track=args.track,
                     config_path=args.experiment,
                     split_manifest_path=args.split_manifest,
-                    raw_root=args.raw_root,
+                    raw_root=args.raw_root or Path("."),
                     exe_root=args.exe_root,
                     artifact_root=args.artifact_root,
                     run_id=args.run_id,
@@ -984,12 +1215,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                     seed=args.seed,
                     command=" ".join(("malweave", *(argv if argv is not None else sys.argv[1:]))),
                     raw_samples_dir=args.raw_samples_dir,
+                    checkpoint_path=args.checkpoint,
+                    resume=args.resume,
+                    max_updates=args.max_updates,
+                    max_seconds=args.max_seconds,
                 )
             )
             print(json.dumps(result["metrics"], indent=2, sort_keys=True))
             return 0
     except ModuleNotFoundError as error:
-        if (error.name or "").split(".")[0] not in {"torch", "tokenizers", "transformers"}:
+        if (error.name or "").split(".")[0] not in {
+            "torch",
+            "tokenizers",
+            "transformers",
+            "safetensors",
+            "sklearn",
+            "boto3",
+            "botocore",
+        }:
             raise
         print(
             "error: Training dependencies are not installed. Run training commands with "

@@ -108,7 +108,7 @@ not CUDA performance or native kernels. The GPU smoke runs BPE, forward/backward
 checkpoint writing and final test on 16 synthetic sources. Its metrics are not research results.
 
 ```bash
-uv run --locked malweave experiment rands-smoke --work-dir data/processed/rands-scratch/gpu-smoke
+uv run --locked malweave experiment rands-smoke --work-dir data/interim/rands-scratch/gpu-smoke
 uv run --locked malweave experiment rands-check --write-test
 uv run --locked malweave experiment rands-prepare --download
 ```
@@ -124,11 +124,11 @@ Check `inputs/prepared.json` and class/group coverage before the training pilot.
 10 optimizer updates on real training data, preserving the exact schedule for continuation:
 
 ```bash
-mkdir -p data/processed/rands-scratch/logs
+mkdir -p data/interim/rands-scratch/logs
 set -o pipefail
 /usr/bin/time -f 'wall=%e s cpu=%P max_rss=%M KB' \
   uv run --locked malweave experiment rands-train --run-id scratch-01 --max-steps 10 \
-  2>&1 | tee data/processed/rands-scratch/logs/scratch-01-pilot.log
+  2>&1 | tee data/interim/rands-scratch/logs/scratch-01-pilot.log
 ```
 
 The first run fits BPE and builds token caches for all splits before training. Preparation time
@@ -151,7 +151,7 @@ not an ambiguously defined trapezoidal PR-AUC.
 
 ## Resume And Artifacts
 
-Local data lives in `data/processed/rands-scratch/inputs`; runs in `.../runs/<run-id>`. Override
+Local data lives in `data/interim/rands-scratch/inputs`; runs in `.../runs/<run-id>`. Override
 with `--data-dir`, `--runs-dir` and `--config`. Freeze config before preparation. Changed code,
 config, split or seed is rejected on resume; a new experiment needs a new preparation/config/run.
 One local writer is enforced; never run the same remote run ID on two machines.

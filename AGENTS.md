@@ -9,9 +9,12 @@
 
 ## Safety
 
-- Treat raw PE files as live malware. Never execute, upload, redistribute, preview, or open them
-  with interactive applications.
-- Read raw samples only when the task requires static inspection. Do not modify them in place.
+- Treat raw PE files as live malware and handle them as data for authorized research.
+  Static inspection, dataset preparation, model training on their bytes, and transfers to the
+  researcher's authorized private storage or GPU/Kaggle environments are permitted within the
+  requested task scope. Keep samples access-controlled; do not publicly redistribute them.
+- Never execute samples or open them with interactive applications. Read them only as needed
+  for the requested static analysis or training workflow. Do not modify source samples in place.
 - Never commit raw samples, sample hashes, sample inventories, private URLs, credentials,
   extracted representations, checkpoints, or run artifacts.
 - Tests must use synthetic, redistributable fixtures. Do not copy real malware bytes into tests.

@@ -24,9 +24,15 @@ The live sample tables expose SHA-256, CPU architecture, file extension, file si
 
 RanDS states that its ransomware samples are **live** and are provided solely for research. It prohibits malicious use, exploitation, and distribution; users are responsible for complying with applicable laws. The site also warns that samples can harm devices and data.
 
-- Do not download raw samples to a personal workstation, commit them to this repository, execute them, restore them, or redistribute them.
-- Obtain institutional approval where required. Handle raw material only in an isolated, disposable malware-analysis environment with no credentials, shared folders, production connectivity, or bridged network access.
-- Prefer the processed feature releases for machine-learning work. The site describes these as containing no executable content, but their metadata and behavioral indicators can still be sensitive research material.
+- The researcher clarified on 2026-11-03 that authorized static research includes dataset
+  preparation, training on PE bytes and transfers to private research storage or GPU/Kaggle
+  environments. Keep raw samples access-controlled and outside Git; do not publicly redistribute
+  them. This project workflow never executes samples or opens them interactively.
+- Keep source samples unchanged, keep credentials out of dataset and notebook outputs, and
+  use the authorized research environment for the requested work.
+- Choose representations according to the experiment: E1/E2 require original PE bytes.
+  The processed feature releases contain no executable content according to the site, but
+  their metadata and behavioral indicators can still be sensitive research material.
 - Keep raw archives, extracted datasets, metadata exports, and experiment artifacts outside version control and document their local access controls.
 
 The official pages do not present a source-code repository for RanDS itself, so there is no dataset repository to clone. Access the dataset through the official website and retain its current research-use notice with the acquisition record.
