@@ -30,6 +30,14 @@ database and archive instead of combining website totals.
 
 ## Download And Storage Plan
 
+The **2026-11-12 RAW acquisition and upload have completed** as a separate authorized data task.
+See the [acquisition, full audit and traceability notes](../workflows/assemblage-acquisition-20261112.md)
+for the exact source, exclusions, original-byte preservation and unresolved benchmark gates.
+This does not resume self-pretraining or approve a VERA experiment protocol.
+
+The acquired `binaries.tar.xz` is actually **Zstandard-compressed**. Preserve its provider filename,
+but detect the codec; do not force XZ decoding with `tar -J`.
+
 Download the metadata archive first, list/extract its database and inspect it read-only. Then
 obtain the binary archive using the same revision. The two compressed archives total 43.15 GB;
 allow additional space for unpacked metadata, EXE outputs and download-tool cache.

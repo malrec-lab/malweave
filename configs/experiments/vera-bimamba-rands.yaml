@@ -1,0 +1,44 @@
+# Superseded C-parent/temporal draft retained under this path pending migration.
+# Not the approved ratio-study launch config; deliberately blocked.
+experiment:
+  dataset: vera_assemblage
+  kind: benchmark
+  name: vera-bimamba-rands
+cohort:
+  deduplication: exact_model_tokens_after_full_exe
+  dataset: vera_assemblage
+  benign_source: assemblage
+  labels: folder_csv_agreement_exclude_entire_disagreeing_source
+  split_method: temporal_pe_coff
+  train_end_exclusive_utc: null
+  validation_end_exclusive_utc: null
+  variant: null
+  approval_status: superseded_do_not_launch
+inputs:
+  exe:
+    truncation: {max_bytes: 65536, max_tokens: 65536}
+    checkpoint_context: 65536
+runtime:
+  gradient_checkpointing: true
+  mamba_fast_path_required: true
+finetuning:
+  representation: exe
+  initialization: completed_finetuning_run
+  mode: full
+  head: {type: linear, initialization: preserve_parent}
+  selection: {checkpoint: validation_roc_auc, threshold: argmax}
+  early_stopping: {patience: 3, min_delta: 0}
+  bootstrap: {replicates: 2000, confidence: 0.95, seed: 0}
+tracks:
+  mamba:
+    training:
+      epochs: 5
+      batch_size: 1
+      effective_batch_size: 64
+      precision: bf16
+      optimizer:
+        learning_rate: 0.00001
+        weight_decay: 0.01
+        betas: [0.9, 0.999]
+        epsilon: 0.00000001
+      scheduler: {type: linear, warmup_ratio: 0.05, max_grad_norm: 1.0}

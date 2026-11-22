@@ -79,6 +79,93 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     data = commands.add_parser("data", help="Inspect and prepare research datasets.")
     data_commands = data.add_subparsers(dest="data_command", required=True)
+    header_migrate = data_commands.add_parser(
+        "pe-header-migrate", help="Copy Header bytes to hash-sharded layout; retain originals."
+    )
+    header_migrate.add_argument("--manifest", type=Path, required=True)
+    header_migrate.add_argument("--bucket", required=True)
+    header_migrate.add_argument("--output-dir", type=Path, required=True)
+    header_migrate.add_argument("--workers", type=int, default=64)
+    eligibility_export = data_commands.add_parser(
+        "vera-eligibility", help="Export complete verified admission evidence."
+    )
+    for name in ("vera-directory", "benign-directory", "output-dir"):
+        eligibility_export.add_argument("--" + name, type=Path, required=True)
+    eligibility_export.add_argument("--contract-id", required=True)
+    ratio_stage = data_commands.add_parser(
+        "vera-stage-ratio", help="Verify staged ratio EXE/token inputs for training loader."
+    )
+    for name in ("membership", "config", "checkpoint", "exe-root", "output-dir"):
+        ratio_stage.add_argument("--" + name, type=Path, required=True)
+    evidence_audit = data_commands.add_parser(
+        "vera-benign-evidence-audit", help="Verify restored Assemblage assessment records."
+    )
+    evidence_audit.add_argument("--directory", type=Path, required=True)
+    evidence_audit.add_argument("--contract-id", required=True)
+    ratios = data_commands.add_parser(
+        "vera-ratios", help="Export approved non-temporal ratio memberships."
+    )
+    ratios.add_argument("--candidates", type=Path, required=True)
+    ratios.add_argument("--membership", type=Path, required=True)
+    ratios.add_argument("--output-dir", type=Path, required=True)
+    ratios.add_argument("--seeds", type=int, nargs=3, required=True)
+    ratios.add_argument("--holdout-seed", type=int, required=True)
+    admission = data_commands.add_parser(
+        "vera-admission", help="Resume static RAW admission evidence."
+    )
+    admission.add_argument("--manifest", type=Path, required=True)
+    admission.add_argument("--output-dir", type=Path, required=True)
+    admission.add_argument("--bucket", required=True)
+    admission.add_argument("--die", type=Path, required=True)
+    admission.add_argument("--workers", type=int, default=2)
+    admission.add_argument("--inherit-runner-sha256")
+    presplit = data_commands.add_parser(
+        "vera-presplit", help="Export audited pre-split representatives."
+    )
+    presplit.add_argument("--manifest", type=Path, required=True)
+    presplit.add_argument("--eligibility", type=Path, required=True)
+    presplit.add_argument("--token-results", type=Path, required=True)
+    presplit.add_argument("--output-dir", type=Path, required=True)
+    presplit.add_argument("--non-temporal", action="store_true")
+    token_audit = data_commands.add_parser(
+        "exe-token-audit", help="Resume digest-verified final-input audit of private EXE objects."
+    )
+    token_audit.add_argument("--manifest", type=Path, required=True)
+    token_audit.add_argument("--checkpoint", type=Path, required=True)
+    token_audit.add_argument("--output-dir", type=Path, required=True)
+    token_audit.add_argument("--workers", type=int, default=4)
+    vera_audit = data_commands.add_parser("vera-audit", help="Export private VERA metadata audit.")
+    vera_audit.add_argument("--manifest", type=Path, required=True)
+    vera_audit.add_argument("--labels", type=Path, required=True)
+    vera_audit.add_argument("--output-dir", type=Path, required=True)
+    vera_time = data_commands.add_parser(
+        "vera-timestamp-audit", help="Resume PE timestamp audit from stored VERA evidence."
+    )
+    vera_time.add_argument("--manifest", type=Path, required=True)
+    vera_time.add_argument("--output-dir", type=Path, required=True)
+    vera_time.add_argument("--bucket", required=True)
+    vera_time.add_argument("--workers", type=int, default=8)
+    header_run = data_commands.add_parser(
+        "pe-header-run", help="Resume full private S3 Header extraction."
+    )
+    header_run.add_argument("--manifest", type=Path, required=True)
+    header_run.add_argument("--inventory", type=Path, required=True)
+    header_run.add_argument("--job-dir", type=Path, required=True)
+    header_run.add_argument("--output-prefix", required=True)
+    header_run.add_argument("--workers", type=int, default=4)
+    header_run.add_argument("--retry-failures", action="store_true")
+    header_run.add_argument(
+        "--inherit-runner-sha256",
+        help="Explicit transport-only runner migration from a pinned prior version.",
+    )
+    header = data_commands.add_parser(
+        "pe-header-pilot", help="Extract and publish a small private S3 Header batch."
+    )
+    header.add_argument("--manifest", type=Path, required=True)
+    header.add_argument("--bucket", required=True)
+    header.add_argument("--output-prefix", required=True)
+    header.add_argument("--job-dir", type=Path, required=True)
+    header.add_argument("--per-group", type=int, default=2)
     rands_die = data_commands.add_parser(
         "rands-die", help="Stream S3 RanDS PEs through LMLM DiE checks with durable progress."
     )
@@ -526,6 +613,48 @@ def _parser() -> argparse.ArgumentParser:
         default=100,
         help="Write one aggregate progress update to stderr after this many sources.",
     )
+    for command in ("setup-ghidra", "pilot-ghidra"):
+        ghidra_tools = data_commands.add_parser(
+            command,
+            help=(
+                "Install/reuse checksum-pinned native Ghidra/JDK without sudo."
+                if command == "setup-ghidra"
+                else "Set up Ghidra and test DIS/DEC + resume on three synthetic benign PEs."
+            ),
+        )
+        ghidra_tools.add_argument(
+            "--cache-dir", type=Path, default=Path.home() / ".cache/malweave/ghidra"
+        )
+        if command == "pilot-ghidra":
+            ghidra_tools.add_argument("--output-dir", type=Path, required=True)
+            ghidra_tools.add_argument("--verify-unlimited", action="store_true")
+    ghidra_filter = data_commands.add_parser(
+        "filter-ghidra-plan",
+        help="Exclude declared .NET using retained PE evidence before batching.",
+    )
+    for name in ("plan", "evidence-db", "inventory-db", "release-audit", "output-dir"):
+        ghidra_filter.add_argument("--" + name, type=Path, required=True)
+    ghidra_filter.add_argument("--batch-size", type=int, default=100)
+    ghidra_filter.add_argument("--resume", action="store_true")
+    ghidra_dashboard = data_commands.add_parser(
+        "ghidra-dashboard", help="Read-only localhost monitor of registered private S3 reports."
+    )
+    ghidra_dashboard.add_argument("--registry", type=Path, required=True)
+    ghidra_dashboard.add_argument("--port", type=int, default=8765)
+    ghidra_dashboard.add_argument("--interval", type=int, default=60)
+    ghidra_benchmark = data_commands.add_parser(
+        "benchmark-ghidra",
+        help="Private RanDS DIS/DEC CPU comparison (10/32/64 sources) or fixed-size batch run.",
+    )
+    ghidra_benchmark.add_argument("--manifest", type=Path, required=True)
+    ghidra_benchmark.add_argument("--output-dir", type=Path, required=True)
+    ghidra_benchmark.add_argument(
+        "--cache-dir", type=Path, default=Path.home() / ".cache/malweave/ghidra"
+    )
+    ghidra_benchmark.add_argument(
+        "--workers", type=int, choices=(1, 2, 3, 4, 5, 8, 12, 13, 16, 21), default=1
+    )
+    ghidra_benchmark.add_argument("--isolated-worker", action="store_true")
     extract_ghidra = data_commands.add_parser(
         "extract-ghidra",
         help="Extract normalized DIS or DEC from metadata-I386 RanDS sources using Ghidra headless.",
@@ -691,6 +820,169 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_project_environment()
 
     try:
+        if args.command == "data" and args.data_command == "filter-ghidra-plan":
+            from malweave.data.ghidra_plan_filter import filter_plan
+
+            print(
+                json.dumps(
+                    filter_plan(
+                        plan=args.plan,
+                        evidence_db=args.evidence_db,
+                        inventory_db=args.inventory_db,
+                        release_audit=args.release_audit,
+                        output_dir=args.output_dir,
+                        batch_size=args.batch_size,
+                        resume=args.resume,
+                    )
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "ghidra-dashboard":
+            from malweave.data.ghidra_dashboard import serve_dashboard
+
+            serve_dashboard(args.registry, args.port, args.interval)
+            return 0
+        if args.command == "data" and args.data_command == "exe-token-audit":
+            from malweave.data.exe_token_audit import audit_exe_tokens
+
+            print(
+                json.dumps(
+                    audit_exe_tokens(args.manifest, args.checkpoint, args.output_dir, args.workers)
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "vera-ratios":
+            from malweave.data.vera_ratio import export_ratio_splits
+
+            print(
+                json.dumps(
+                    export_ratio_splits(
+                        args.candidates,
+                        args.membership,
+                        args.output_dir,
+                        args.seeds,
+                        args.holdout_seed,
+                    )
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "pe-header-migrate":
+            from malweave.data.pe_header_migrate import migrate_headers
+
+            print(
+                json.dumps(
+                    migrate_headers(args.manifest, args.bucket, args.output_dir, args.workers)
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "vera-stage-ratio":
+            from malweave.data.vera_training_release import stage_ratio_release
+
+            print(
+                json.dumps(
+                    stage_ratio_release(
+                        args.membership,
+                        args.config,
+                        args.checkpoint,
+                        args.exe_root,
+                        args.output_dir,
+                    )
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "vera-eligibility":
+            from malweave.data.vera_evidence import export_eligibility
+
+            print(
+                json.dumps(
+                    export_eligibility(
+                        args.vera_directory,
+                        args.benign_directory,
+                        args.contract_id,
+                        args.output_dir,
+                    )
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "vera-benign-evidence-audit":
+            from malweave.data.vera_evidence import audit_assemblage_evidence
+
+            print(json.dumps(audit_assemblage_evidence(args.directory, args.contract_id)))
+            return 0
+        if args.command == "data" and args.data_command == "vera-admission":
+            from malweave.data.vera_admission import run_admission
+
+            print(
+                json.dumps(
+                    run_admission(
+                        args.manifest,
+                        args.output_dir,
+                        args.bucket,
+                        args.die,
+                        args.workers,
+                        inherit_runner_sha256=args.inherit_runner_sha256,
+                    )
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "vera-presplit":
+            from malweave.data.vera_presplit import export_presplit
+
+            print(
+                json.dumps(
+                    export_presplit(
+                        args.manifest,
+                        args.eligibility,
+                        args.token_results,
+                        args.output_dir,
+                        non_temporal=args.non_temporal,
+                    )
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "vera-audit":
+            from malweave.data.vera_audit import export_vera_audit
+
+            summary = export_vera_audit(args.manifest, args.labels, args.output_dir)
+            print(json.dumps(summary, indent=2))
+            return 0
+        if args.command == "data" and args.data_command == "vera-timestamp-audit":
+            from malweave.data.vera_audit import audit_vera_timestamps
+
+            print(
+                json.dumps(
+                    audit_vera_timestamps(
+                        args.manifest, args.output_dir, args.bucket, args.workers
+                    )
+                )
+            )
+            return 0
+        if args.command == "data" and args.data_command == "pe-header-run":
+            from malweave.data.pe_header_run import run_headers
+
+            summary = run_headers(
+                manifest=args.manifest,
+                inventory=args.inventory,
+                job_dir=args.job_dir,
+                output_prefix=args.output_prefix,
+                workers=args.workers,
+                retry_failures=args.retry_failures,
+                inherit_runner_sha256=args.inherit_runner_sha256,
+            )
+            print(json.dumps(summary, indent=2))
+            return 0
+        if args.command == "data" and args.data_command == "pe-header-pilot":
+            from malweave.data.pe_header import header_batch
+
+            summary = header_batch(
+                manifest=args.manifest,
+                bucket=args.bucket,
+                output_prefix=args.output_prefix,
+                job_dir=args.job_dir,
+                per_group=args.per_group,
+            )
+            print(json.dumps(summary, indent=2))
+            return 0
         if args.command == "data" and args.data_command == "rands-ghidra":
             if args.action == "status":
                 print((args.job_dir / "progress.json").read_text())
@@ -1000,6 +1292,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             summary = write_rands_pe_assessment_outputs(rows, summary, args.manifest, args.summary)
             print(json.dumps(summary, indent=2, sort_keys=True))
             return 0
+        if args.command == "data" and args.data_command in ("setup-ghidra", "pilot-ghidra"):
+            from malweave.data.ghidra_tools import run_ghidra_pilot, setup_ghidra
+
+            result = (
+                setup_ghidra(args.cache_dir)
+                if args.data_command == "setup-ghidra"
+                else run_ghidra_pilot(
+                    args.cache_dir, args.output_dir, verify_unlimited=args.verify_unlimited
+                )
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0 if result.get("status", "passed") == "passed" else 1
+        if args.command == "data" and args.data_command == "benchmark-ghidra":
+            from malweave.data.ghidra_benchmark import run_benchmark
+
+            result = run_benchmark(
+                args.manifest,
+                args.cache_dir,
+                args.output_dir,
+                workers=args.workers,
+                isolated_worker=args.isolated_worker,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0 if result["status"] == "completed" else 1
         if args.command == "data" and args.data_command == "extract-ghidra":
             dataset_config = load_rands_dataset_config(args.config)
             locations = dataset_config.resolve_locations(args.root, args.metadata_root)

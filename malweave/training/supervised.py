@@ -61,6 +61,7 @@ class SplitExample:
     exe_representation_sha256: str
     family: str = ""
     year: int | None = None
+    state: str = ""
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,11 @@ def _sha256_file(path: Path) -> str:
 
 def _validate_audited_cohort(request: SupervisedRunRequest, config: dict) -> dict | None:
     """Bind a token-deduplicated split to the actual checkpoint and preprocessing."""
+    if (
+        config.get("experiment", {}).get("dataset") == "vera_assemblage"
+        and config.get("cohort", {}).get("deduplication") != "exact_model_tokens_after_full_exe"
+    ):
+        raise SupervisedTrainingError("VERA transfer requires a frozen exact-input cohort audit.")
     if config.get("cohort", {}).get("deduplication") != "exact_model_tokens_after_full_exe":
         return None
     try:
@@ -120,7 +126,15 @@ def _validate_audited_cohort(request: SupervisedRunRequest, config: dict) -> dic
             or identity["tokenizer_sha256"]
             != _sha256_file(request.checkpoint_path / "tokenizer.json")
             or identity["checkpoint_config_sha256"]
-            != _sha256_file(request.checkpoint_path / "config.json")
+            != _sha256_file(
+                request.checkpoint_path
+                / (
+                    "run-manifest.json"
+                    if config.get("finetuning", {}).get("initialization")
+                    == "completed_finetuning_run"
+                    else "config.json"
+                )
+            )
             or identity["production_adapter_sha256"]
             != _sha256_file(PROJECT_ROOT / "malweave/data/lmlm_inputs.py")
             or identity["max_bytes"] != config["inputs"]["exe"]["truncation"]["max_bytes"]
@@ -191,6 +205,7 @@ def load_supervised_split(path: Path) -> list[SplitExample]:
                     exe_representation_sha256=exe_digest,
                     family=row.get("family") or "",
                     year=int(row["year"]) if row.get("year") else None,
+                    state=row.get("state") or "",
                 )
             )
     return examples
@@ -460,6 +475,8 @@ def _evaluate(
     precision: str = "fp32",
     predictions: list[int] | None = None,
 ) -> tuple[float, list[float], list[int]]:
+    from malweave.training.finetune_state import mixed_precision_context
+
     model.eval()
     loss_sum = 0.0
     count = 0
@@ -467,7 +484,7 @@ def _evaluate(
     labels: list[int] = []
     with (
         torch.no_grad(),
-        torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=precision == "bf16"),
+        mixed_precision_context(device, precision),
     ):
         for batch in loader:
             input_ids = batch["input_ids"].to(device)
@@ -509,17 +526,63 @@ def _validate_transfer_config(config: dict[str, Any]) -> dict[str, Any]:
         training = config["tracks"]["mamba"]["training"]
         runtime = config["runtime"]
         exe = config["inputs"]["exe"]
-        if config["experiment"]["dataset"] != "rands":
-            raise ValueError("Expected experiment.dataset=rands.")
+        ratio_study = config["experiment"].get("protocol") == "vera_active_latent_ratios"
+        completed_parent = transfer.get("initialization") == "completed_finetuning_run"
+        if transfer.get("initialization") not in (
+            None,
+            "original_mlm",
+            "completed_finetuning_run",
+        ):
+            raise ValueError("Unsupported fine-tuning initialization.")
+        if config["experiment"]["dataset"] not in (
+            {"rands", "vera_assemblage"} if completed_parent or ratio_study else {"rands"}
+        ):
+            raise ValueError("Unsupported dataset for checkpoint initialization.")
+        if ratio_study:
+            policy = config.get("cohort", {})
+            if (
+                config["experiment"]["dataset"] != "vera_assemblage"
+                or transfer.get("initialization") != "original_mlm"
+                or transfer["mode"] != "full"
+                or training["precision"] != "fp16"
+                or training.get("effective_batch_size") != 64
+                or training["epochs"] > 5
+                or policy.get("split_method") != "stratified_group_disjoint_non_temporal"
+                or policy.get("deduplication") != "exact_model_tokens_after_full_exe"
+                or policy.get("active_percentage") not in {0, 10, 30, 50, 70, 90, 100}
+                or type(policy.get("active_percentage")) is not int
+            ):
+                raise ValueError(
+                    "Ratio study requires original MLM, full FP16 and approved cohort policy."
+                )
+            if config["experiment"]["kind"] == "benchmark" and (
+                policy.get("approval_status") != "approved_frozen"
+                or not policy.get("final_training_authorized", False)
+            ):
+                raise ValueError(
+                    "Ratio benchmark requires frozen cohort and final training authorization."
+                )
+        elif config["experiment"]["dataset"] == "vera_assemblage":
+            policy = config.get("cohort", {})
+            if config["experiment"]["kind"] == "benchmark" and (
+                policy.get("approval_status") != "approved_frozen"
+                or policy.get("variant") not in {"M1", "M2", "M3"}
+                or not policy.get("train_end_exclusive_utc")
+                or not policy.get("validation_end_exclusive_utc")
+            ):
+                raise ValueError(
+                    "VERA benchmark requires approved frozen temporal variant policy."
+                )
         if "architecture" in config["tracks"]["mamba"] or "tokenizer" in exe:
             raise ValueError(
                 "Released runs must not override architecture or fit a RanDS tokenizer."
             )
         if transfer["representation"] != "exe" or transfer["mode"] not in {"full", "head_only"}:
             raise ValueError("Declare EXE and mode full or head_only.")
-        if transfer["head"] != {"type": "linear", "initialization": "upstream_normal"}:
+        expected_head = "preserve_parent" if completed_parent else "upstream_normal"
+        if transfer["head"] != {"type": "linear", "initialization": expected_head}:
             raise ValueError(
-                "Declare the supported fresh linear head with upstream_normal initialization."
+                f"Declare the supported linear head with {expected_head} initialization."
             )
         if transfer["selection"] != {
             "checkpoint": "validation_roc_auc",
@@ -546,11 +609,15 @@ def _validate_transfer_config(config: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Require an explicit positive byte prefix before tokenization.")
         if config["experiment"]["kind"] == "benchmark" and (
             exe["truncation"] != {"max_bytes": 65536, "max_tokens": 65536}
-            or training["precision"] != "bf16"
+            or training["precision"] != ("fp16" if ratio_study else "bf16")
         ):
-            raise ValueError("Benchmark requires the approved 65536-byte/token limits and BF16.")
-        if transfer["bootstrap"]["confidence"] != 0.95 or transfer["bootstrap"]["seed"] != 0:
-            raise ValueError("Require 95% stratified bootstrap with seed 0.")
+            raise ValueError("Benchmark requires approved 65536-byte/token limits and precision.")
+        bootstrap_seed = 2026 if ratio_study else 0
+        if (
+            transfer["bootstrap"]["confidence"] != 0.95
+            or transfer["bootstrap"]["seed"] != bootstrap_seed
+        ):
+            raise ValueError(f"Require 95% stratified bootstrap with seed {bootstrap_seed}.")
         if (
             type(transfer["bootstrap"]["replicates"]) is not int
             or transfer["bootstrap"]["replicates"] < 1
@@ -577,8 +644,8 @@ def _validate_transfer_config(config: dict[str, Any]) -> dict[str, Any]:
             or numbers[3] <= 0
         ):
             raise ValueError("Invalid optimizer/scheduler settings.")
-        if scheduler["type"] != "linear" or training["precision"] not in {"fp32", "bf16"}:
-            raise ValueError("Supported scheduler/precision: linear and fp32 or CUDA bf16.")
+        if scheduler["type"] != "linear" or training["precision"] not in {"fp32", "bf16", "fp16"}:
+            raise ValueError("Supported scheduler/precision: linear and fp32 or CUDA bf16/fp16.")
         if any(
             type(runtime[key]) is not bool
             for key in ("gradient_checkpointing", "mamba_fast_path_required")
@@ -659,6 +726,12 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     train_rows = _partition(examples, "train")
     validation_rows = _partition(examples, "validation")
     test_rows = _partition(examples, "test")
+    ratio_study = config.get("experiment", {}).get("protocol") == "vera_active_latent_ratios"
+    if ratio_study:
+        from malweave.training.finetune_state import state_recalls
+
+        for rows in (train_rows, validation_rows, test_rows):
+            state_recalls([r.state for r in rows], [r.label for r in rows], [0] * len(rows))
     if transfer is not None and any(
         {row.label for row in rows} != {0, 1} for rows in (train_rows, validation_rows, test_rows)
     ):
@@ -710,20 +783,39 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         and (device.type != "cuda" or torch.cuda.get_device_capability(device)[0] < 8)
     ):
         raise SupervisedTrainingError("bf16 requires a supporting CUDA device.")
+    if (
+        transfer is not None
+        and not malconv_baseline
+        and config["tracks"]["mamba"]["training"]["precision"] == "fp16"
+        and device.type != "cuda"
+    ):
+        raise SupervisedTrainingError("fp16 requires a CUDA device.")
     tokenizer = None
     released = None
     if request.checkpoint_path is not None:
-        from malweave.training.lmlm_checkpoint import load_released_bimamba
-
-        released = load_released_bimamba(
-            request.checkpoint_path,
-            representation=transfer["representation"],
-            max_tokens=config["inputs"]["exe"]["truncation"]["max_tokens"],
-            source_context=config["inputs"]["exe"]["checkpoint_context"],
-            gradient_checkpointing=config["runtime"]["gradient_checkpointing"],
-            head_initialization=transfer["head"]["initialization"],
-            max_bytes=config["inputs"]["exe"]["truncation"]["max_bytes"],
+        from malweave.training.lmlm_checkpoint import (
+            load_finetuned_bimamba_for_transfer,
+            load_released_bimamba,
         )
+
+        if transfer.get("initialization") == "completed_finetuning_run":
+            released = load_finetuned_bimamba_for_transfer(
+                request.checkpoint_path,
+                max_bytes=config["inputs"]["exe"]["truncation"]["max_bytes"],
+                max_tokens=config["inputs"]["exe"]["truncation"]["max_tokens"],
+                gradient_checkpointing=config["runtime"]["gradient_checkpointing"],
+                source_context=config["inputs"]["exe"]["checkpoint_context"],
+            )
+        else:
+            released = load_released_bimamba(
+                request.checkpoint_path,
+                representation=transfer["representation"],
+                max_tokens=config["inputs"]["exe"]["truncation"]["max_tokens"],
+                source_context=config["inputs"]["exe"]["checkpoint_context"],
+                gradient_checkpointing=config["runtime"]["gradient_checkpointing"],
+                head_initialization=transfer["head"]["initialization"],
+                max_bytes=config["inputs"]["exe"]["truncation"]["max_bytes"],
+            )
         tokenizer = released.inputs
     elif request.track != "malconvgct":
         exe_root = request.exe_root
@@ -806,6 +898,7 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         return max(0.0, (total_updates - step) / max(total_updates - warmup_updates, 1))
 
     scheduler = LambdaLR(optimizer, learning_rate_factor)
+    scaler = torch.amp.GradScaler("cuda", enabled=training["precision"] == "fp16")
     if not request.resume:
         run_dir.mkdir(parents=True, exist_ok=False)
     tokenizer_digest = (
@@ -876,7 +969,13 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                 else "2502450e40ac00363e168106662aac29821d4a93"
             ),
         }
-    from malweave.training.finetune_state import restore_rng, save_training_state, write_json
+    from malweave.training.finetune_state import (
+        mixed_precision_context,
+        restore_rng,
+        save_training_state,
+        scaled_optimizer_step,
+        write_json,
+    )
 
     saved = None
     if request.resume:
@@ -909,6 +1008,10 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         model.load_state_dict(saved["model"], strict=True)
         optimizer.load_state_dict(saved["optimizer"])
         scheduler.load_state_dict(saved["scheduler"])
+        if scaler.is_enabled():
+            if not saved.get("grad_scaler"):
+                raise SupervisedTrainingError("FP16 resume requires saved GradScaler state.")
+            scaler.load_state_dict(saved["grad_scaler"])
         shuffle_rng.set_state(saved["epoch_generator_state"])
         restore_rng(saved)
     write_json(run_dir / "run-manifest.json", manifest)
@@ -924,6 +1027,7 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
     history = saved["history"] if saved else []
     optimizer.zero_grad()
     update = saved["update"] if saved else 0
+    skipped_updates = saved.get("skipped_updates", 0) if saved else 0
     first_epoch = saved["epoch"] if saved else 1
     last_log = started
     stopped_early = saved.get("stopped_early", False) if saved else False
@@ -941,6 +1045,8 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                 "epoch_loss_sum": loss_sum,
                 "epoch_samples": samples,
                 "update": update,
+                "skipped_updates": skipped_updates,
+                "grad_scaler": scaler.state_dict(),
                 "best_auc": best_auc,
                 "best_epoch": best_epoch,
                 "stale_epochs": stale_epochs,
@@ -994,12 +1100,7 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                 else {}
             )
             precision = training["precision"]
-            autocast = (
-                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-                if precision == "bf16"
-                else torch.autocast(device_type="cpu", enabled=False)
-            )
-            with autocast:
+            with mixed_precision_context(device, precision):
                 output = model(input_ids, labels=labels, **kwargs)
                 assert output.loss is not None
                 if not torch.isfinite(output.loss).item():
@@ -1014,7 +1115,7 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                     len(train_rows) - group_start,
                 )
                 loss = output.loss * labels.numel() / group_samples
-            loss.backward()
+            scaler.scale(loss).backward()
             epoch_loss_sum += output.loss.item() * labels.numel()
             epoch_samples += labels.numel()
             session_samples += labels.numel()
@@ -1022,17 +1123,9 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                 loaders["train"]
             ):
                 max_grad_norm = training.get("scheduler", {}).get("max_grad_norm")
-                if max_grad_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), float(max_grad_norm))
-                if any(
-                    parameter.grad is not None and not torch.isfinite(parameter.grad).all().item()
-                    for parameter in model.parameters()
-                ):
-                    raise SupervisedTrainingError("Nonfinite gradients; aborting run.")
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-                update += 1
+                stepped = scaled_optimizer_step(model, optimizer, scheduler, scaler, max_grad_norm)
+                update += int(stepped)
+                skipped_updates += int(not stepped)
                 if resumable:
                     persist(
                         epoch, batch_index, epoch_generator_state, epoch_loss_sum, epoch_samples
@@ -1045,12 +1138,15 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
                         request.max_seconds is not None
                         and time.perf_counter() - started >= request.max_seconds
                     ):
-                        manifest.update(status="paused", updates=update)
+                        manifest.update(
+                            status="paused", updates=update, skipped_updates=skipped_updates
+                        )
                         write_json(run_dir / "run-manifest.json", manifest)
                         elapsed = previous_elapsed + time.perf_counter() - started
                         metrics = {
                             "status": "paused",
                             "updates": update,
+                            "skipped_updates": skipped_updates,
                             "runtime_seconds": elapsed,
                             "test_evaluated": False,
                             "epoch": epoch,
@@ -1227,6 +1323,8 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         "history": history,
         "runtime_seconds": elapsed,
         "peak_memory_bytes": peak_memory,
+        "optimizer_updates": update,
+        "skipped_updates": skipped_updates,
         "failures": [],
     }
     if resumable:
@@ -1241,6 +1339,10 @@ def run_supervised_training(request: SupervisedRunRequest) -> dict[str, Any]:
         tn, fp = metrics["test"]["confusion_matrix"][0]
         fn, tp = metrics["test"]["confusion_matrix"][1]
         metrics["test"].update(fpr=fp / (tn + fp), tp=tp, fn=fn, fp=fp, tn=tn)
+        if ratio_study:
+            metrics["test"]["states"] = state_recalls(
+                [row.state for row in test_rows], test_labels, test_predictions
+            )
         train_families = {row.family for row in train_rows if row.label == 1 and row.family}
         family_support = Counter(row.family for row in test_rows if row.label == 1 and row.family)
         family_detected = Counter(

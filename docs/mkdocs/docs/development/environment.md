@@ -99,6 +99,12 @@ unless requested. New dataset/model groups are useful only when their stacks war
 
 ## Optional External Analysis Tools
 
+`malweave data setup-ghidra` provides an opt-in, checksum-verified native Ghidra/JDK
+cache; `malweave data pilot-ghidra` adds the existing synthetic DIS/DEC/resume check.
+See [the reusable CPU workflow](../workflows/data-preparation.md#reusable-ghidra-setup-and-synthetic-cpu-pilot).
+It installs no Python packages outside the uv lock, changes no system Java or shell
+profile, and does not install DiE. Tool pins remain Ghidra 11.2.1 / JDK 21.0.13+9.
+
 The current EXE path uses the locked Python LIEF dependency. Ghidra/Java, `file` and Detect-It-Easy
 are not installed by uv and are not blanket prerequisites for external-pretraining development.
 Use `file`/DiE when an explicitly scoped architecture/packing annotation requires them; record
@@ -125,6 +131,31 @@ export JAVA_HOME="$PWD/data/external/tools/jdk-21.0.13+9"
 ```
 
 ## GPU Reproducibility
+
+### Retained Local Operator Setup Notes
+
+The researcher requested that documentation survive the 2026-11-12 branch switch while discarding
+the corresponding uncommitted code/configuration. The following describes that discarded tooling,
+**not commands supported by this branch**:
+
+- `bash scripts/setup-ghidra-worker.sh --analysis-only` had installed pinned uv/Python and data-only
+  dependencies plus JDK/Ghidra/DiE, with synthetic verification, without sudo or `.env` edits.
+- `data install-analysis-tools --verify` had managed Ghidra 11.2.1, DiE 3.21 and portable Temurin JDK
+  21 for macOS ARM64/Intel and Linux x86_64. Pins were in `configs/tools/analysis-tools.yaml`;
+  the file and installer implementation were discarded. It did not install system packages or
+  execute package scripts. A tool JSON selected the managed JDK instead of arbitrary system Java.
+- `data verify-analysis-tools --tools-file ...` had exercised synthetic DIS/DEC and three DiE modes;
+  checking archive hashes was not considered sufficient runtime verification.
+- The discarded S3 rolling worker used standard AWS credentials through boto3, not Runpod volume
+  keys, and was not a parser sandbox. Data-only startup avoided importing/downloading the training
+  stack; actual training still required the training dependency group.
+
+See the [retained rolling-worker notes](../workflows/ghidra-s3-rolling.md) for historical layout
+and pilot details. For the **current** supported commands, follow
+[data preparation](../workflows/data-preparation.md). Private originals of the local documentation
+were also preserved outside Git under `work/branch-switch/`.
+
+### Current GPU Runtime
 
 The Python lock does not lock GPU drivers or all native libraries. Record OS/architecture,
 accelerator model/count, driver and CUDA/runtime, framework build/index, native kernels,

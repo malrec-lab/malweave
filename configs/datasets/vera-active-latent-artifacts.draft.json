@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "status": "review_only_not_an_implemented_exporter",
+  "csv_artifacts": {
+    "inventory.csv": {
+      "stage": "audit",
+      "row_unit": "source occurrence; retain cross-folder duplicates",
+      "required_columns": ["source_sha256", "dataset", "source_key", "partition", "csv_classification", "label", "state", "extraction_status", "exe_representation_sha256", "exe_key", "exe_size", "evidence_key", "eligibility_status"]
+    },
+    "timestamps.csv": {
+      "stage": "audit",
+      "row_unit": "source and candidate timestamp evidence",
+      "required_columns": ["source_sha256", "timestamp_field", "raw_value", "timestamp_utc", "timestamp_semantics", "evidence_key", "evidence_sha256", "validation_status", "validation_reason", "selected_for_split"]
+    },
+    "excluded.csv": {
+      "stage": "audit_and_freeze",
+      "row_unit": "source and exclusion reason; multiple reasons allowed",
+      "required_columns": ["source_sha256", "dataset", "reason_code", "evidence_reference", "policy_reference"]
+    },
+    "groups.csv": {
+      "stage": "audit",
+      "row_unit": "source membership in a leakage group",
+      "required_columns": ["source_sha256", "group_id", "group_basis", "state", "label", "state_conflict", "class_conflict"]
+    },
+    "checkpoint-overlap.csv": {
+      "stage": "audit",
+      "row_unit": "source and exposure audit outcome, including unknown",
+      "required_columns": ["source_sha256", "exposure_inventory", "match_basis", "audit_status", "disposition"]
+    },
+    "split.csv": {
+      "stage": "freeze_only",
+      "row_unit": "selected source; one shared temporal assignment",
+      "required_columns": ["split", "source_sha256", "label", "family", "snapshot", "raw_representation_sha256", "raw_relative_path", "raw_size", "exe_representation_sha256", "exe_relative_path", "exe_size", "active_leakage_group_sha256", "dataset", "state", "timestamp_utc", "timestamp_field", "timestamp_evidence_reference", "train_M1", "train_M2", "train_M3"],
+      "compatibility": "Preserve existing RanDS SPLIT_FIELDS; loader validation and path staging adaptation still required."
+    },
+    "M1/split.csv": {"stage": "freeze_only", "schema": "split.csv", "selection": "M1 train plus common validation and test"},
+    "M2/split.csv": {"stage": "freeze_only", "schema": "split.csv", "selection": "M2 train plus common validation and test"},
+    "M3/split.csv": {"stage": "freeze_only", "schema": "split.csv", "selection": "M3 train plus common validation and test"}
+  },
+  "json_artifacts": {
+    "input-artifacts.json": ["input object identity", "version or ETag", "content SHA-256", "release and tool provenance"],
+    "timestamp-audit.json": ["field coverage by source and state", "invalid and missing counts", "year distribution", "timestamp semantics and limitations"],
+    "dedup-audit.json": ["source, EXE and final-input group counts", "state and class conflicts", "benign project grouping coverage"],
+    "checkpoint-overlap-audit.json": ["verified exposure inventories", "unknown historical exposure", "match counts and dispositions"],
+    "pending-decisions.json": ["unresolved choices", "missing evidence", "freeze blockers"],
+    "summary.json": ["per-stage source accounting", "multi-reason exclusion counts and unique excluded counts", "per-state and class coverage", "split and variant counts", "runtime and failures", "output_sha256"],
+    "release-audit.json": ["all source occurrences accounted", "zero cross-split leakage groups", "temporal ordering", "balance and variant membership", "shared validation/test identity", "all blockers resolved"],
+    "frozen-config.json": ["resolved policy", "approval record", "code identity", "checkpoint/tokenizer identity", "input limits", "seed", "temporal cutoffs"]
+  },
+  "rules": [
+    "Do not create fake empty final split files before freeze prerequisites pass.",
+    "Missing timestamp or exposure evidence remains explicit, never silently dropped.",
+    "Generated source inventories, hashes, private keys/URLs and run artifacts must not be committed.",
+    "Exporting audit artifacts does not authorize training."
+  ]
+}

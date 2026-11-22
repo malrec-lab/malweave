@@ -1,0 +1,80 @@
+# Review-only preparation specification, NOT executable by experiment train yet.
+# The current training CLI loads author MLM weights with a fresh head; it must
+# gain a tested completed-run transfer path before this specification can run.
+schema_version: 1
+status: draft_not_executable
+execution_enabled: false
+experiment:
+  dataset: vera_assemblage
+  name: vera-bimamba-rands-transfer
+  cohort_config: configs/datasets/vera-active-latent.draft.yaml
+initialization:
+  format: malweave_completed_finetuning_run
+  source_run: c-metadata-round02-5ep-seed0
+  s3_archive_key: malweave/experiments/rands-scratch/c-metadata-round02-5ep-seed0/latest.tar.gz
+  private_storage_config: null
+  archive_sha256: null
+  verified_local_run_directory: null
+  weights: model.safetensors
+  preserve: [backbone, classification_head, tokenizer, label_mapping]
+  required_label_mapping: {benign: 0, ransomware: 1}
+  require_completed_run_and_matching_artifact_digests: true
+  reject_random_or_mlm_fallback: true
+  verify_architecture_from_parent_provenance: true
+  assume_mini_8m: false
+  optimizer: fresh
+  scheduler: fresh
+  parent_last_pt: never_load_for_new_dataset
+variants:
+  M1:
+    split_manifest: data/processed/vera/active-latent-draft/M1/split.csv
+    ransomware_states: [Active]
+  M2:
+    split_manifest: data/processed/vera/active-latent-draft/M2/split.csv
+    ransomware_states: [Latent]
+  M3:
+    split_manifest: data/processed/vera/active-latent-draft/M3/split.csv
+    ransomware_states: [Active, Latent]
+  independent_parent_reload_per_variant: true
+  shared_validation_and_test: true
+inputs:
+  representation: exe
+  tokenizer: inherit_verified_parent
+  byte_encoding_and_truncation: inherit_verified_parent
+  fit_tokenizer: false
+training:
+  # Proposed starting values from C; not a new approved VERA schedule.
+  status: proposed_requires_review
+  mode: full
+  epochs: 5
+  batch_size: 1
+  effective_batch_size: 64
+  precision: bf16
+  gradient_checkpointing: true
+  mamba_fast_path_required: true
+  optimizer:
+    type: AdamW
+    learning_rate: 0.00001
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+    epsilon: 0.00000001
+  scheduler: {type: linear, warmup_ratio: 0.05, max_grad_norm: 1.0}
+  early_stopping: {metric: validation_roc_auc, patience: 3, min_delta: 0}
+  seeds: null
+evaluation:
+  checkpoint_selection: validation_roc_auc
+  decision_rule: softmax_argmax_ties_class_0
+  metrics: [roc_auc, average_precision, precision, recall, f1, fpr, confusion_matrix]
+  subgroup_metrics: [active_recall, latent_recall, benign_fpr]
+  use_test_for_selection: false
+readiness_gates:
+  - verify_parent_archive_and_completed_run_weights_tokenizer_provenance
+  - audit_parent_training_validation_and_tokenizer_exposure_overlap
+  - approve_remaining_cohort_policies_and_training_settings
+  - audit_pe_timestamps_and_freeze_temporal_cutoffs
+  - freeze_balanced_manifests_with_common_validation_test
+  - implement_and_test_completed_finetuned_run_training_initialization
+  - verify_all_parent_backbone_and_head_tensors_preserved_before_first_update
+  - verify_fresh_optimizer_scheduler_and_independent_variant_initialization
+  - pass_synthetic_gpu_capacity_probe_and_release_audit
+  - explicit_researcher_launch_approval

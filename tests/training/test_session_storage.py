@@ -4,11 +4,47 @@ from hashlib import sha256
 import io
 import json
 import tarfile
+from urllib.error import URLError
 
 import pytest
 
 from malweave.training import session_storage as storage
 from malweave.training.contracts import SupervisedTrainingError
+
+
+@pytest.mark.parametrize("headers, expected", [(None, ""), ({"content-type": "x/test"}, "x/test")])
+def test_presigned_put_does_not_inject_unsigned_form_content_type(monkeypatch, headers, expected):
+    seen = []
+
+    def open_request(request, *, timeout):
+        seen.append(request)
+        return io.BytesIO(b"")
+
+    monkeypatch.setattr(storage, "urlopen", open_request)
+    assert (
+        storage.request_bytes(
+            "https://storage.example/private?signature=secret", data=b"synthetic", headers=headers
+        )
+        == b""
+    )
+    assert seen[0].get_method() == "PUT"
+    assert seen[0].get_header("Content-type") == expected
+    if headers is not None:
+        assert headers == {"content-type": "x/test"}
+
+
+def test_private_transfer_reports_reason_type_without_leaking_url(monkeypatch):
+    private = "https://storage.example/private?signature=secret"
+
+    def fail(*args, **kwargs):
+        raise URLError(BrokenPipeError(32, private))
+
+    monkeypatch.setattr(storage, "urlopen", fail)
+    with pytest.raises(SupervisedTrainingError) as caught:
+        storage.request_bytes(private, data=b"synthetic", attempts=1)
+    assert "URLError/BrokenPipeError; errno=32" in str(caught.value)
+    assert "secret" not in str(caught.value)
+    assert "storage.example" not in str(caught.value)
 
 
 def test_snapshot_roundtrip_and_identity(tmp_path):

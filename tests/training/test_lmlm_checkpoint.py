@@ -227,6 +227,39 @@ def test_exe_only_finetune_uses_saved_tokenizer_and_preserves_initialization(
         run_supervised_training(request)
 
 
+def test_completed_parent_transfer_preserves_every_tensor_and_can_train(tmp_path: Path):
+    from malweave.training.lmlm_checkpoint import load_finetuned_bimamba_for_transfer
+
+    request = experiment(tmp_path)
+    run_supervised_training(request)
+    parent = request.artifact_root / request.run_id
+    original = load_file(str(parent / "model.safetensors"))
+    loaded = load_finetuned_bimamba_for_transfer(
+        parent, max_bytes=64, max_tokens=12, source_context=64, gradient_checkpointing=False
+    )
+    for name, value in original.items():
+        torch.testing.assert_close(loaded.model.state_dict()[name], value, rtol=0, atol=0)
+    assert loaded.model.training
+    assert loaded.provenance["classification_head"] == "preserved_parent"
+    with pytest.raises(SupervisedTrainingError, match="contract"):
+        load_finetuned_bimamba_for_transfer(
+            parent, max_bytes=32, max_tokens=12, source_context=64, gradient_checkpointing=False
+        )
+    config = yaml.safe_load(request.config_path.read_text())
+    # Exercise the new initialization independently of dataset cohort admission.
+    config["experiment"]["dataset"] = "rands"
+    config["finetuning"]["initialization"] = "completed_finetuning_run"
+    config["finetuning"]["head"]["initialization"] = "preserve_parent"
+    path = tmp_path / "transfer.yaml"
+    path.write_text(yaml.safe_dump(config))
+    result = run_supervised_training(
+        replace(request, config_path=path, checkpoint_path=parent, run_id="child")
+    )
+    assert result["manifest"]["initialization"]["parent_run_id"] == request.run_id
+    assert result["manifest"]["initialization"]["optimizer_state"] == "fresh"
+    load_finetuned_bimamba(request.artifact_root / "child")
+
+
 def test_cli_checkpoint_path_does_not_require_raw_pe(tmp_path: Path):
     request = experiment(tmp_path)
     assert (

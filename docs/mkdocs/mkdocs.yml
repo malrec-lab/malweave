@@ -16,11 +16,14 @@ nav:
           - SOREL conversion protocol: workflows/sorel-protocol.md
           - Retained RanDS scratch workflow: workflows/rands-scratch.md
       - Data preparation: workflows/data-preparation.md
+      - Assemblage RAW acquisition notes: workflows/assemblage-acquisition-20261112.md
   - Development:
       - Getting started: getting-started.md
       - Onboarding a task: onboarding.md
       - Environment and dependencies: development/environment.md
       - Project structure: project-structure.md
+      - Retained rolling S3 operator notes: workflows/ghidra-s3-rolling.md
+      - Retained distributed Ghidra plan: workflows/distributed-ghidra-plan.md
   - Datasets:
       - Overview: datasets/index.md
       - RanDS: datasets/rands.md

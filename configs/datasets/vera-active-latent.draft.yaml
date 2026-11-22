@@ -1,0 +1,178 @@
+# Approved scientific specification; not an operational training launch config.
+# Final training authorization remains required after full evidence and GPU probe.
+schema_version: 1
+status: approved_protocol_pending_complete_evidence_and_gpu_probe
+execution_enabled: false
+dataset: vera_active_latent
+representation: exe
+ratio_study:
+  approval_record: docs/mkdocs/docs/workflows/lmlm-checkpoints.md
+  active_fractions_of_ransomware: [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
+  # Researcher reduced execution to seed 0 because of resource limits.
+  seed_count: 1
+  sampling_seeds: [0]
+  model_seeds: [0]
+  seed_pairing: corresponding_sampling_and_model_seed
+  size_policy: largest_common_across_all_ratios_without_replacement
+  fixed_benign_within_seed: true
+  shared_holdout_across_ratios: true
+  split_sizes:
+    status: question_15_option_A_approved
+    basis: smaller_unambiguous_ransomware_state_after_admission_and_dedup
+    validation_per_state_fraction_of_basis: 0.10
+    test_per_state_fraction_of_basis: 0.10
+    rounding: floor
+    holdout_benign_equals_total_ransomware: true
+    holdout_active_equals_latent: true
+    train_ransomware_count: largest_common_feasible_multiple_of_10_after_holdout
+    final_counts:
+      train_ransomware: 3430
+      train_benign: 3430
+      validation: {Active: 429, Latent: 429, benign: 858}
+      test: {Active: 429, Latent: 429, benign: 858}
+  precision: fp16
+  final_training_authorization: researcher_requested_full_training_pending_readiness_gates
+
+sources:
+  vera:
+    release: zenodo-17904705-v1
+    root: vera/zenodo-17904705-v1/
+    labels: labels/vera_labels.csv
+    exe_manifest: exe/lief-0.15.1-v1/manifest.csv
+    exe_summary: exe/lief-0.15.1-v1/summary.json
+    exe_release_audit: exe/lief-0.15.1-v1/release-audit.json
+    timestamp_evidence: reports/virustotal/
+    bucket: null # Supply through private storage configuration, not credentials here.
+  benign:
+    source: assemblage
+    status: approved_in_conversation
+    label: 0
+    state: benign
+    exe_manifest: null
+    metadata_manifest: null
+
+eligibility:
+  labels:
+    status: approved_in_conversation
+    join: source_sha256
+    authoritative_csv_columns: [File Hash, Classification]
+    allowed_states: [Active, Latent]
+    require_folder_csv_agreement: true
+    exclude_entire_source_if_any_folder_disagrees: true
+    exclude_failed_analysis: true
+    preserve_originals_and_evidence: true
+  extraction_status: success
+  architecture_and_packing:
+    policy: i386_and_successful_negative_file_die_evidence
+    die_modes: [recursive, deep, heuristic]
+    require_all_modes_success: true
+    unknown_or_missing: exclude_and_report
+    retain_clr: true
+
+timestamps:
+  status: reporting_only_non_temporal_split_approved
+  split_axis: none
+  reporting_name: pe_coff_timestamp_flags_not_admission_gates
+  preferred_evidence: existing_lief_structured_pe_report
+  missing_evidence: retain_and_flag_no_timestamp_admission_gate
+  vera_candidate_fields:
+    - data.attributes.first_submission_date
+    - data.attributes.first_seen_itw_date
+    - data.attributes.creation_date
+  # These fields have different semantics; this list is NOT a fallback order.
+  selected_vera_field: pe_coff_timestamp
+  selected_benign_field: pe_coff_timestamp
+  auxiliary_evidence_role: cross_check_only_not_required_for_each_source
+  benign_candidates: [source_build_time, official_release_time]
+  inspect_pe_coff_timestamp: true
+  accept_pe_coff_timestamp_for_split: false
+  allow_s3_upload_or_download_time: false
+  allow_silent_fallback: false
+  missing_or_invalid: retain_and_flag
+  validation:
+    retain_field_path_and_report_digest: true
+    retain_all_candidate_values: true
+    check_unix_unit_and_utc_conversion: true
+    flag_future_dates_and_inconsistent_chronology: true
+    flag_zero_missing_and_reproducible_build_indicators: true
+    flagged_value_disposition: reporting_only
+    accepted_date_bounds: null
+
+deduplication:
+  source: source_sha256
+  representation: exe_representation_sha256
+  final_model_input:
+    policy: required_exact_tokens_as_rands_round02
+    status: approved_before_non_temporal_split
+    same_label: retain_one_representative
+    conflicting_classes: exclude_entire_group
+    tokenizer_and_input_contract: selected_original_mlm_verified_normalized_tokenizer_65536_bytes_tokens
+  ransomware_benign_conflict: quarantine_entire_group
+  active_latent_shared_exe:
+    keep_evidence: true
+    split_group_together: true
+    training_membership_policy: exclude_shared_groups_from_primary_ratio_study
+  benign_project_build_grouping: null
+  parent_checkpoint_exposure:
+    status: not_a_gate_original_mlm_initialization
+    inventories: [] # Train, validation/model selection and tokenizer fitting.
+    missing_inventory: disclose_unknown_exposure_do_not_claim_independence
+    overlap_disposition: retain_candidates_do_not_automatically_exclude
+    distinguish_parent_roles: [train_gradient_updates, validation_model_selection, test_evaluation]
+    evaluation:
+      primary: entire_frozen_vera_test
+      supplementary: subset_without_parent_train_raw_or_exe_overlap_if_sufficient
+    original_lmlm_pretraining_overlap: unknown_disclose_no_contamination_free_claim
+
+split:
+  method: stratified_group_disjoint_non_temporal
+  random_fallback: not_applicable_non_temporal_approved
+  train_end_exclusive_utc: null
+  validation_end_exclusive_utc: null
+  groups_spanning_boundaries_policy: null
+  shared_validation_and_test: true
+  require_active_and_latent_in_validation_and_test: true
+  ransomware_to_benign_ratio: [1, 1]
+  insufficient_benign: block_freeze_no_silent_ransomware_downsampling
+  train_active_percentages: [0, 10, 30, 50, 70, 90, 100]
+  benign_train_selection_policy: fixed_within_seed_across_ratios
+  seed: 42
+
+evaluation:
+  validation_cadence: end_of_each_epoch
+  checkpoint_selection: validation_roc_auc
+  test: after_best_validation_checkpoint_selection_only
+
+statistics:
+  confidence_intervals:
+    status: researcher_approved_bootstrap_method
+    confidence_level: 0.95
+    bootstrap_draws: 2000
+    unit: independent_final_model_input_group
+    strata: [benign, Active, Latent]
+    paired_resamples_across_ratios: true
+    input: saved_test_labels_and_predictions_no_retraining
+    bootstrap_seed: 2026
+    limitations:
+      - conditional_on_fitted_models_and_observed_test_cohort
+      - does_not_replace_between_training_seed_variability
+      - does_not_control_unknown_family_or_project_relationships
+
+checkpoint:
+  primary: author_mini_bimamba_mlm_bpe16k_checkpoint400_strict_loader_verified
+  architecture_size: hidden192_layers16_8055362_classifier_non_embedding_11202626_total
+  source_run: null
+  source_archive_key: null # Resolve original MLM artifact, not RanDS C weights.
+  initialization: original_mlm_backbone_fresh_binary_head
+  optimizer_state: fresh_not_parent_resume
+  artifact_manifest: null # Private verified artifact manifest supplied at staging.
+  tokenizer_manifest: null # Verified equivalence evidence supplied at staging.
+  independent_initialization_per_run: true
+  original_lmlm_comparison: adaptation_not_faithful_appendix_f_reproduction
+
+outputs:
+  # Private, ignored research artifacts only. Do not commit generated inventories.
+  directory: data/processed/vera/active-latent-draft
+  artifact_contract: configs/datasets/vera-active-latent-artifacts.draft.json
+  allow_final_split_export_with_pending_decisions: false
+  preserve_all_source_outcomes: true

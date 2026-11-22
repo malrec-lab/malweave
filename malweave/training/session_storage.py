@@ -29,10 +29,18 @@ def request_bytes(url, *, data=None, headers=None, attempts=3, limit=256 * 1024*
     location = urlsplit(url)
     if location.scheme != "https" or not location.netloc or location.username:
         raise SupervisedTrainingError("A private HTTPS transfer URL is required.")
+    request_headers = dict(headers or {})
+    if data is not None and not any(key.lower() == "content-type" for key in request_headers):
+        # urllib otherwise injects application/x-www-form-urlencoded. That
+        # changes the signed content type of legacy S3 presigned PUT requests.
+        request_headers["Content-Type"] = ""
     for attempt in range(attempts):
         try:
             request = Request(
-                url, data=data, headers=headers or {}, method="PUT" if data is not None else "GET"
+                url,
+                data=data,
+                headers=request_headers,
+                method="PUT" if data is not None else "GET",
             )
             with urlopen(request, timeout=120) as response:
                 result = response.read(limit + 1)
@@ -41,7 +49,13 @@ def request_bytes(url, *, data=None, headers=None, attempts=3, limit=256 * 1024*
             return result
         except (HTTPError, URLError, TimeoutError, OSError) as error:
             if attempt + 1 == attempts:
-                code = error.code if isinstance(error, HTTPError) else type(error).__name__
+                if isinstance(error, HTTPError):
+                    code = str(error.code)
+                else:
+                    reason = error.reason if isinstance(error, URLError) else error
+                    code = f"{type(error).__name__}/{type(reason).__name__}"
+                    if isinstance(reason, OSError) and isinstance(reason.errno, int):
+                        code += f"; errno={reason.errno}"
                 raise SupervisedTrainingError(f"Private transfer failed ({code}).") from None
             time.sleep(2**attempt)
     raise AssertionError("Unreachable transfer state")

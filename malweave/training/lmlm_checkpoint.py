@@ -176,6 +176,40 @@ def load_released_bimamba(
         raise SupervisedTrainingError(f"Released checkpoint rejected: {error}") from error
 
 
+def load_finetuned_bimamba_for_transfer(
+    root: Path,
+    *,
+    max_bytes: int,
+    max_tokens: int,
+    source_context: int,
+    gradient_checkpointing: bool,
+) -> ReleasedBiMamba:
+    """Initialize a new run from a verified classifier, never its optimizer state."""
+    loaded = load_finetuned_bimamba(root)
+    config = loaded.provenance["source_config"]
+    if (
+        max_bytes != loaded.inputs.max_bytes
+        or max_tokens != loaded.inputs.max_tokens
+        or source_context != loaded.provenance["source_context"]
+        or config.get("is_decoder", False)
+        or config.get("bi_mix_directions", False)
+    ):
+        raise SupervisedTrainingError("Parent input/architecture contract must be preserved.")
+    parent = json.loads((root / "run-manifest.json").read_text())
+    loaded.model.config.gradient_checkpointing = gradient_checkpointing
+    loaded.model.train()
+    loaded.provenance = {
+        **loaded.provenance,
+        "initialization_kind": "completed_finetuning_run",
+        "parent_run_manifest_sha256": file_sha256(root / "run-manifest.json"),
+        "parent_artifact_files_sha256": parent["artifact_files_sha256"],
+        "parent_run_id": parent["run_id"],
+        "classification_head": "preserved_parent",
+        "optimizer_state": "fresh",
+    }
+    return loaded
+
+
 def load_finetuned_bimamba(root: Path) -> ReleasedBiMamba:
     """Reload a completed MalWeave run without the author's original artifact folder."""
     try:

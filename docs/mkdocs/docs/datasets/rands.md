@@ -69,6 +69,33 @@ The [data workflow](../workflows/data-preparation.md) defines metadata validatio
 extraction. Audit the release contract before processing a source snapshot. The committed dataset config records aggregate release expectations only; local paths,
 sample hashes, and manifests remain outside version control.
 
+## DIS/DEC scope after .NET exclusion
+
+The researcher approved excluding declared .NET from DIS/DEC on 2026-11-20,
+including within the former 70,028-source P1 group. Filtering retained PE/LIEF
+evidence against the audited inventory produced:
+
+| Scope | Included (no declared CLR) | Excluded .NET | Pending review |
+| --- | ---: | ---: | ---: |
+| All 215,404 sources | 126,997 | 88,263 | 144 |
+| Original P1 | 27,941 | 42,066 | 21 |
+| Benign | 73,267 | 37,510 | 11 |
+| Ransomware | 53,730 | 50,753 | 133 |
+
+Pending review comprises 131 failed/missing successful PE reports and 13 incomplete
+CLR declarations. A nonzero CLR-directory RVA **and** size establishes the declared
+managed exclusion; a zero pair is only a native candidate, not proof that no managed
+payload exists. No original source, historical evidence or frozen VERA/EXE split is
+removed. Source-digest verification is inherited from historical evidence, not
+claimed as freshly reverified. The new plan has 1,277 batches of at most 100 sources,
+including 280 P1 batches. Preserve priority order without promoting lower tiers.
+Non-I386 later-tier sources remain planned, not runnable through the I386-only runner.
+
+See the [filter/restart guide](../workflows/data-preparation.md) and
+`configs/datasets/rands-ghidra-batches.yaml` for the maintained policy and private
+manifest references. Plan completion does not mean old Kaggle runtimes were updated
+or that included sources have completed extraction.
+
 ## Processed Dataset Releases
 
 The [processed-datasets page](https://ran-ds.com/features) currently offers five feature representations. Download only the representation required for the experiment; every release may be a password-protected ZIP archive using the password above. The site states that these archives contain no executables.

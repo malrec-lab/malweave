@@ -1,0 +1,115 @@
+dataset: rands
+snapshot: "2026-09-02"
+protocol: lmlm_x86_unpacked
+
+sources:
+  inventory: data/processed/rands/raw-s3/inventory.sqlite
+  inventory_objects: 215404
+  die_evidence: rands/private-evidence/die-assessment/2026-11-01/rands-die-results.csv
+  die_evidence_rows: 215404
+  die_evidence_snapshot: "2026-11-01"
+  exe_representation_prefix: rands/representations/exe/
+
+scope:
+  total_files: 215404
+  total_bytes: 182133336077
+  rule: "giữ toàn bộ mẫu trong inventory; .NET bị loại khỏi DIS/DEC theo phê duyệt 2026-11-20; ưu tiên quyết định thứ tự phần còn lại"
+  managed_policy: exclude_declared_clr_from_dis_dec
+  managed_detection: "CLR_RUNTIME_HEADER có RVA và size khác 0; gồm IL-only, AnyCPU, mixed-mode và managed-native-header; khai báo nửa vời hoặc bằng chứng thiếu vẫn pending_review"
+  managed_exclusion_count: 88263
+  included_sources: 126997
+  pending_review: 144
+  included_bytes: 125976431730
+  managed_exclusion_note: "Lọc từ bằng chứng PE/LIEF lưu sẵn đối chiếu inventory; kế thừa mức xác minh digest lịch sử, không đọc lại raw. Giữ manifest cũ, mẫu gốc và split VERA/EXE."
+
+# Điều kiện vào nhóm ưu tiên cao nhất: kết hợp DiE + metadata + nhóm EXE
+priority:
+  P1_die_negative_packed0_representative:
+    rule: "i386 + 3 mode DiE success + die_obfuscation_state=not_detected + metadata Packed=0 + hash verified + arch khớp + đại diện nhóm EXE"
+    historical_files: 70028
+    files: 27941
+    excluded_dotnet: 42066
+    pending_review: 21
+    benign: 19608
+    ransomware: 8333
+    note: "Đây là nhóm vừa DiE-negative vừa metadata sạch — nguồn train ưu tiên."
+  P2_die_negative_packed1_representative:
+    rule: "i386 + DiE-negative + đại diện nhóm EXE nhưng metadata Packed=1"
+    historical_files: 59972
+    files: 26015
+    excluded_dotnet: 33890
+    pending_review: 67
+    note: "DiE và metadata mâu thuẫn; chạy sau P1 để kiểm chứng."
+  P3_die_negative_deferred:
+    rule: "i386 + DiE-negative nhưng trùng EXE cùng nhãn hoặc thiếu EXE representation"
+    historical_files: 15509
+    files: 13803
+    excluded_dotnet: 1665
+    pending_review: 41
+  P4_die_negative_conflict:
+    rule: "i386 + DiE-negative nhưng cùng nhóm EXE mang hai nhãn"
+    historical_files: 919
+    files: 917
+    excluded_dotnet: 2
+    pending_review: 0
+  P5_die_incomplete:
+    rule: "i386 nhưng DiE thiếu mode / unknown / lệch metadata"
+    historical_files: 669
+    files: 23
+    excluded_dotnet: 646
+    pending_review: 0
+  P6_die_obfuscated:
+    rule: "i386 nhưng DiE phát hiện packing/obfuscation"
+    historical_files: 23801
+    files: 14431
+    excluded_dotnet: 9360
+    pending_review: 10
+  P7_non_i386:
+    rule: "amd64/arm/arm64/unknown"
+    historical_files: 44506
+    files: 43867
+    excluded_dotnet: 634
+    pending_review: 5
+
+train_selection:
+  rule: "gom nhóm theo digest EXE, giữ sha256 nhỏ nhất, loại nhóm xung đột nhãn"
+  exe_group_digest: "MD5 = ETag của object rands/representations/exe (proxy cho SHA256 của EXE stage)"
+  split_note: "Gán train/val/test vẫn do rands_training.prepare thực hiện sau khi có EXE stage cục bộ."
+
+batching:
+  batch_size: 100
+  byte_cap_MiB: 300
+  batches: 1277
+  files: 126997
+  ordering: "lọc CLR trước chia lô; giữ thứ tự priority/batch/ordinal cũ; không bù P1 từ tier khác; tối đa 100 nguồn hoặc 300 MiB, nguồn quá lớn ở lô riêng"
+  files_per_batch: "3-100"
+  runtime_estimate: "chưa đo trên cohort sau lọc; không áp dụng ước tính pilot cũ"
+  priority_batches:
+    P1: 280
+    P2: 261
+    P3: 139
+    P4: 11
+    P5: 2
+    P6: 145
+    P7: 439
+  P1_batch_range: "1-280 (27.941 nguồn sau lọc)"
+
+manifest:
+  path: work/ghidra-batches-native-v2/manifest.private.json
+  sha256: 77386badcbb4bd7928ebefd1ba273942a836a84a46b2fd51c7043308fee5d9b7
+  per_file_index: work/ghidra-batches-native-v2/batches.csv
+  per_file_index_sha256: b0f4776517b38669dde460b67805b6d7ce7bc8d259e284cb30a6091e894f1eac
+  summary: work/ghidra-batches-native-v2/summary.json
+  historical_manifest: work/ghidra-batches-v1/manifest.json
+  historical_manifest_sha256: 1cc5713ce5d1eadadec25e409656a6dae03d2d01d59bef7156b758f8a609f236
+
+existing_representations:
+  exe: rands/representations/exe/
+  pe_header: rands/representations/pe-header/
+  dis: "có kết quả lịch sử; phải đối soát identity, trạng thái và bằng chứng backup trước resume"
+  dec: "có kết quả lịch sử; không coi archive cuối là DIS+DEC thành công"
+
+notes:
+  - "Manifest lô dùng mode: batch; runner chỉ nhận I386, heap 1 GiB, không deadline, tối đa 1000 nguồn."
+  - "5 job account hiện tại × 12 worker; config mới không tự thay runtime Kaggle đang chạy."
+  - "Tệp này không chứa hash mẫu hay URL riêng tư."

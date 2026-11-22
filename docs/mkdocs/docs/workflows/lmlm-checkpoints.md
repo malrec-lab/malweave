@@ -32,12 +32,31 @@ machine for **all available original PEs** with RanDS metadata `Arch=I386`,
 `Packed=false`, and valid negative packing evidence from all three DiE modes.
 Unknown, failed or missing DiE evidence does not admit a sample. Architecture is
 selected from RanDS metadata; PE32 alone is not proof of native x86 code, and this
-choice adds no new CLR/AnyCPU exclusion.
+choice originally added no CLR/AnyCPU exclusion; the later approved exclusion
+below supersedes that part for new DIS/DEC batch plans.
 
 The extraction pool is independent of the frozen training cohorts: no
 undersampling, temporal filtering or EXE deduplication is applied here. This
 approval does not change the EXE experiment inputs, splits or training protocol.
 Potential DIS/DEC experiments and deduplication policies remain separate decisions.
+
+On 2026-11-20 the researcher approved excluding **all declared .NET sources from
+new DIS/DEC batch extraction**, including IL-only/AnyCPU, mixed-mode and
+managed-native-header sources. Apply the filter to the full audited inventory
+**before batching**, including within the original 70,028-source P1 group, then
+preserve the existing priority order among remaining sources. Do not backfill P1
+from lower tiers merely to retain its former count. Identify declared managed
+sources using nonzero RVA and size of `CLR_RUNTIME_HEADER`, retaining per-source
+evidence and class/tier-specific exclusion counts. Missing, failed or ambiguous
+evidence remains pending review, not proof of native code.
+
+This researcher-approved scope restriction is a dataset adaptation, not a claim of
+complete RanDS coverage. It supersedes the earlier pending-managed-queue proposal;
+no managed backend is planned for this extraction run. Keep originals, old outputs
+and old manifests immutable; use a new manifest/config revision and runtime before
+launching new jobs. Native pilot semantics, EXE inputs and frozen VERA train/test
+memberships are unchanged. The extraction guide documents evidence-only filtering
+and its historical source-digest limitations.
 
 The approved execution schedule uses 16 source workers and batches of 16 PEs,
 prefetching one additional batch during analysis. Each source worker runs DIS
@@ -272,6 +291,296 @@ with a fresh optimizer; exact continuation of the author's original training has
 been established. Structural validity does not establish convergence or metric quality.
 
 ## Implemented BiMamba transfer path
+
+### VERA continuation from the RanDS classifier
+
+#### Approved Active/Latent ratio study (2026-11-15)
+
+**Researcher-confirmed research question:**
+
+> Khi giữ nguyên kích thước tập huấn luyện và tỷ lệ ransomware:benign, việc
+> thay đổi tỷ lệ ransomware Active so với Latent trong tập train ảnh hưởng
+> thế nào đến khả năng phát hiện ransomware nói chung và từng nhóm
+> Active/Latent của BiMamba khởi tạo từ MLM gốc?
+
+The study estimates the effect of training-set state composition on this admitted
+VERA/Assemblage cohort, not universal ransomware detection performance. A smaller
+deduplicated cohort does not invalidate this question by itself. Assess final
+independent group counts, state/family coverage, per-seed variability and confidence
+intervals before interpreting results. Three seeds do not increase independent
+test support. Small or uncertain differences must be reported as inconclusive;
+do not claim an optimal ratio solely from the highest observed score. Retain
+deduplication and disclose architecture/packing/source selection and absent
+project-level grouping rather than inflating sample counts with duplicates.
+
+This decision record supersedes the earlier VERA continuation design below.
+The frozen RanDS experiment is unchanged. Answers refer to the 30-question
+pre-training review; approval is scientific intent, not implementation readiness.
+
+**Selected initialization:** the researcher requested inspection of the author
+archive and proceeding with Mini, superseding the earlier H384 initialization.
+The recovered EXE BPE16K bidirectional MLM `checkpoint-400` has H192/16 layers;
+its trainer JSON references that same checkpoint as best. Strict loading passed.
+Stored MLM tensors contain 11,218,632 elements; the fresh binary classifier has
+11,202,626 parameters total and **8,055,362 excluding embeddings**, consistent
+with the Mini ~8M designation when embeddings are excluded. It is distinct from
+the H384 model used for C. Normalized tokenizer definitions equal the completed
+token audit's tokenizer, so that audit is reusable for this Mini. Private artifact
+verification is at `work/vera-mini-mlm/verification-private.json`.
+
+Complete admission/presplit exports now exist under
+`data/processed/vera/eligibility-complete-v2/` and `presplit-complete-v2/`.
+The capacity calculation reports 6,205 Active, 4,295 Latent, 30,524 benign final-token groups
+and 98 shared-state groups excluded from the primary pool. Option A permits
+3,430 ransomware plus 3,430 benign per train and 1,716 examples per holdout.
+These are complete presplit capacities, not frozen seeded memberships or training
+authorization. The v2 export corrects exclusion reporting: 54,634 non-I386,
+4,670 obfuscated and one failed assessment, rather than calling these unknown.
+Candidate and source-membership tables are byte-identical to v1; no cohort changed.
+
+| Question | Researcher answer / approved interpretation |
+| --- | --- |
+| 1 | Binary benign/ransomware detection; Active/Latent are composition/evaluation strata. |
+| 2 | Both proposed sets: Active fractions 0, 10, 30, 50, 70, 90, 100 percent of ransomware. |
+| 3 | Vary train only; shared fixed validation/test. |
+| 4 | Train ransomware:benign = 1:1. |
+| 5 | Largest common train size feasible for every ratio; no arbitrary 5K cap. |
+| 6 | Same benign training membership across ratios within each seed. |
+| 7 | VERA ransomware and Assemblage benign only. |
+| 8 | I386 and valid negative packing evidence; missing/unknown is not admitted. |
+| 9 | No additional CLR exclusion. |
+| 10 | Exclude entire folder/CSV-disagreeing sources, Failed Analysis and extraction failures. |
+| 11 | Ordered full-EXE then exact final-token dedup; one same-class representative; quarantine class conflicts. |
+| 12 | Exclude Active/Latent-shared groups from the primary ratio study, preserving evidence. |
+| 13 | No RanDS-parent exclusion gate: initialize from original MLM, not RanDS C. Historical overlap reports remain evidence only. Original pretraining exposure remains unknown. |
+| 14 | Non-temporal group-disjoint split, stratified by class/state; explicitly a detection-protocol adaptation. |
+| 15 | Approved option A: validation and test each take floor(10% of the smaller eligible unambiguous ransomware-state pool) from each state. Match benign to total ransomware in each holdout. Maximize equal train size across ratios; no frozen numerical counts yet. |
+| 16 | Validation/test each benign:ransomware = 1:1 and ransomware Active:Latent = 1:1. |
+| 17 | Temporal representative rule not applicable after answer 14B. Deterministic non-temporal representative tie-break still to be specified. |
+| 18 | Timestamp flags are reporting only, not admission gates. |
+| 19 | RAW/EXE/token groups only; disclose no project-level leakage control. |
+| 20 | No oversampling; sampling without replacement within each dataset. |
+| 21 | Selected author Mini BiMamba EXE BPE16K MLM `checkpoint-400`, H192/16 layers. Fresh binary head, no RanDS-trained tensors. Classifier: 8,055,362 parameters excluding embeddings, 11,202,626 total. Strict loader and tokenizer equivalence verified; native GPU probe still required. |
+| 22 | Full fine-tuning. |
+| 23 | At most five epochs, effective batch 64, C-style early stopping (patience 3, min_delta 0). |
+| 24 | C optimizer/schedule proposal, but FP16 rather than BF16: AdamW LR 1e-5, WD .01, 5% linear warmup/linear decay and gradient clipping. Verify FP16 gradient-scaling/native-kernel stability in GPU probe. |
+| 25 | Best validation ROC-AUC checkpoint. Answer 23B retains early stopping; fixed-step/no-early-stop portion of original option 25A does not apply. |
+| 26 | Three matched seeds per ratio. Subsequently approved: sampling seeds 0/1/2 paired respectively with model seeds 0/1/2, recorded separately; shared holdout seed 42. |
+| 27 | Primary ransomware F1; ROC-AUC, PR-AUC, precision, recall, confusion matrix, FPR; argmax threshold. Explicit Active and Latent recall. |
+| 28 | Per-seed metrics, mean/std, group-level bootstrap confidence intervals. Subsequently approved: 95% CI, 2,000 draws from saved test labels/predictions (no retraining), stratified by benign/Active/Latent, with paired group resamples across ratios for metric differences; bootstrap seed 2026. |
+| 29 | Private Kaggle; choose suitable available GPU by actual FP16 capacity/stability probe, not assumed readiness. |
+| 30 | Prepare/audit/freeze/probe, then request final authorization before full training. |
+
+The original seven-ratio, three-seed plan implied **21 primary runs**.
+The researcher subsequently reduced execution to **seed 0 only** because of
+resource limits: **7 primary runs**, one per ratio. Cancel seed 1 and do not
+launch seed 2; retain existing memberships, reports and partial artifacts as
+evidence, not as additional completed study repetitions. Shared holdouts and
+all other approved settings remain unchanged. Report single-seed results, not
+a three-seed mean/std, and explicitly state that training-seed variability is
+not measured. This reduction does not authorize launching all pending ratios
+automatically or changing the approved group-bootstrap reporting method.
+The researcher subsequently authorized three additional seed-0 executions,
+Active 30/50/70 percent, on their second private Kaggle account. On 2026-11-19,
+the researcher explicitly authorized a fresh seed-0 Active70 rerun (without
+recovering/resuming its earlier attempt) and the Active100 endpoint on their
+currently authenticated account. This supersedes their immediately preceding
+70/90 request; Active90 is not authorized for this launch. Preserve the old
+Active70 evidence and use fresh attempt/output identifiers. Both runs retain
+independent original Mini MLM initialization, Assemblage-only benign examples,
+the existing frozen memberships and shared holdouts, maximum five epochs and
+the approved early stopping. No seed-1/2 executions are authorized.
+This operational change preserves
+the original MLM initialization, frozen cohorts, shared holdouts, five-epoch
+maximum and approved selection/evaluation rules; it does not change the
+seven-ratio scientific design or imply that all seven runs are complete.
+Bootstrap intervals quantify test-cohort sampling uncertainty conditional on fitted
+models; report training-seed variability separately. Resample independent final-input
+groups, not duplicate source records. This does not establish family/project
+independence or address unknown original-pretraining exposure. The researcher's CI
+approval does not by itself approve the separately proposed numeric sampling/model/
+holdout seeds, evaluation cadence, or full training launch.
+
+The researcher subsequently explicitly requested full training. This records launch
+intent, but does not certify technical readiness: frozen audited memberships,
+explicit numeric execution choices, the actual Mini native-FP16 GPU probe and
+resource budget remain prerequisites. Do not launch the obsolete C-parent config
+or bypass release checks to satisfy this request.
+
+The researcher then approved sampling/model seeds 0/1/2 (paired respectively),
+holdout seed 42, bootstrap seed 2026 and validation at the end of every epoch.
+Test evaluation follows best-validation-checkpoint selection, not test-based tuning.
+These numeric execution choices are no longer pending; technical readiness gates
+remain in force.
+
+The private membership bundle is now exported at
+`data/processed/vera/ratios-seeds012-holdout42-v1/`. Its membership audit verifies
+21 runs, identical holdouts, fixed benign train within each seed, exact ratio
+counts and source/EXE/token split isolation. This is a membership audit, not the
+byte/token staging release or a successful GPU probe.
+
+Independently initialize each run from identical verified MLM weights; do not
+chain ratios. If R ransomware
+examples are used per run, the 0/100 endpoints require R <= min(A,L,B) after
+reserving evaluation and removing ambiguous groups; each train has 2R samples.
+For balanced evaluation of size N, allocate N/2 benign and N/4 each Active/Latent.
+Same validation/test across seeds is the proposed interpretation, not permission
+to vary the holdout to maximize a particular run. Additional numeric seeds,
+evaluation cadence, bootstrap settings and Kaggle resource limits must be recorded
+before final training authorization. Existing C-parent executable config is obsolete
+for this study and remains blocked; update implementation before any launch.
+
+Question 15 option A was explicitly confirmed after presenting provisional
+capacities. Let M = min(A,L) after complete admission/dedup, and h = floor(0.1M).
+Reserve h Active, h Latent and 2h benign independently for each of validation
+and test, with shared fixed holdout membership across all runs. The largest
+train ransomware count is R = 10 * floor(min(A-2h,L-2h,B-4h)/10), allowing exact
+0/10/30/50/70/90/100-percent composition without oversampling; each train has R
+benign and R ransomware. Require positive counts and verify group isolation.
+Provisional examples (not frozen counts) were 1,348 samples per holdout and
+5,380 per train; recalculate after full evidence and original MLM tokenizer
+identity verification. This maximizes train capacity subject to the approved
+holdouts and equal-size comparison, not usage of every source in every run.
+
+Implementation progress: original MLM files bundled under `lmlm/checkpoint/` in
+the verified private S3 archive match all original-initialization digests recorded
+by C, including weights distinct from C's fine-tuned weights. The original and
+saved C tokenizers have identical normalized definitions after disabling padding
+and applying identical right truncation, so the completed token digest audit can
+be reused with this explicit equivalence evidence. No model inference is implied
+by this artifact verification.
+
+`malweave data vera-presplit --non-temporal` skips timestamp admission and uses
+deterministic source-digest representative selection (an implementation proposal,
+not a scientific timestamp choice). `malweave data vera-ratios --candidates ...
+--membership ... --output-dir ... --seeds S1 S2 S3 --holdout-seed H` implements
+question 15A with fixed shared holdouts, ambiguous-state removal, exact ratios,
+matched benign membership and nested state selections within each seed. Numeric
+seeds must be supplied explicitly and recorded for final confirmation. Exports
+are membership tables, not yet supervised-loader release artifacts. Synthetic
+tests verify ratios, fixed holdouts and isolation; real-data export still awaits
+admission completion and benign evidence-coverage verification. FP16 autocast,
+gradient scaling and scaler recovery are implemented: unscale before clipping,
+skip optimizer/scheduler updates on overflow, persist skipped-update counts and
+reject FP16 resume without scaler state. Synthetic tests cover overflow recovery
+and identical resumed steps; native CUDA/Mamba stability remains unverified.
+The explicit `vera_active_latent_ratios` training protocol accepts only original
+MLM/full-FP16 initialization and blocks benchmark launches without a frozen cohort
+and final authorization. The existing cohort audit is still required; membership
+exports alone do not satisfy it. Ratio-loader staging now verifies every local EXE
+digest/size and exact final-token digest, checks class/state/ratio/holdout balance
+and binds the supervised split to checkpoint/tokenizer/preprocessing identity.
+It does not certify admission evidence or authorize training. State membership
+is explicit in the loader; test evaluation reports Active/Latent support, detected
+counts and recall independently of family. Synthetic tests cover these paths.
+Real-data staging and the native-model Kaggle probe remain pending. Kaggle access
+has been restored; a private hardware probe completed 20 basic FP16 linear steps
+on the available T4 runtime, not a BiMamba/context capacity or native-kernel test.
+An independent native-runtime inspection was submitted. Do not treat basic AMP
+success or aggregate dual-GPU VRAM as proof the single-device model fits. Do not
+launch the obsolete C-parent config or claim end-to-end readiness.
+
+The researcher selected VERA Active/Latent with Assemblage benign data and a
+PE/COFF-timestamp temporal axis, initialized independently for M1/M2/M3 from
+the completed C `metadata-round02` classifier. This is a dataset extension,
+not a reproduction of the original LMLM corpus. Inspection of the completed
+parent manifest and safetensors shapes confirms hidden size 384, 32 bidirectional
+layers and 68,006,018 total parameters (61,711,490 excluding embeddings), not
+Mini 8M. Model/tokenizer artifact digests and the bundled RanDS split digest
+were verified against the parent manifest without loading optimizer pickle data.
+
+`configs/experiments/vera-bimamba-rands.yaml` uses the supervised training schema
+with `finetuning.initialization: completed_finetuning_run` and head initialization
+`preserve_parent`. The loader verifies the completed parent artifact digests,
+loads all backbone/head tensors strictly and retains the parent tokenizer and
+input limits. Optimizer/scheduler are newly created; the parent's `last.pt` is
+not loaded. Child runs retain parent manifest/weight identities in provenance.
+Existing MLM transfer behavior remains unchanged.
+
+This config is deliberately blocked until temporal cutoffs, variant and
+`approval_status: approved_frozen` are resolved and a matching full-EXE/final-input
+cohort audit is supplied. The draft dataset/artifact specifications under
+`configs/datasets/vera-active-latent*` remain review specifications rather than
+frozen training releases. `malweave data vera-audit` now exports occurrence-level
+inventory, exclusions and full-EXE groups; `malweave data vera-timestamp-audit`
+resumably reads digest-verified stored LIEF evidence. These are partial metadata
+audits, not split generation or final-input deduplication. Timestamp coverage,
+group boundary decisions, complete parent-exposure audit, frozen manifests and
+GPU capacity validation remain prerequisites. Exact RAW/full-EXE overlap with
+the parent's train, validation and test cohorts must be accounted for before
+claiming an unseen temporal evaluation.
+No VERA GPU training run has been launched by this preparation.
+
+The researcher subsequently approved retaining VERA candidates that overlap the
+parent RanDS cohort, rather than automatically excluding them. Report parent
+training (gradient updates), validation (model selection) and test exposure
+separately. Evaluate the entire frozen VERA test and, when sufficient samples
+exist, additionally report its subset without exact RAW/full-EXE overlap with
+parent training. Neither result establishes absence of original LMLM-pretraining
+overlap: that exposure is unknown and must be disclosed. This decision does not
+permit RAW/full-EXE groups to cross the new VERA train/validation/test boundaries.
+The researcher subsequently reapproved matching RanDS round-02's pre-split
+preparation, superseding the earlier request to stop final-token dedup. Complete
+architecture/packing evidence review, full-EXE dedup and exact final-token dedup
+before selecting temporal splits. Retain one representative for same-class
+duplicates and exclude entire conflicting-class groups, with complete provenance.
+Do not treat Active/Latent membership as a benign/ransomware class conflict.
+Missing metadata-equivalent admission evidence remains a blocker, not implicit
+eligibility. Token auditing resumes with two workers. Temporal cutoffs, the
+Active/Latent shared-group policy and representative timestamp rules still need
+resolution; this does not authorize training or alter the frozen RanDS protocol.
+
+For matching the paper's **malware detection** task, Section V-C (p. 9)
+specifies temporally disjoint balanced train/test sets (25K/8K), timestamps
+restricted to 2010–2020 after anomaly removal, and curator timestamps for
+Assemblage/BODMAS/SOREL versus `objdump` timestamps for the Windows collection.
+Do not substitute the random split used for the paper's other downstream tasks
+and call it an equivalent detection protocol. Using PE/COFF timestamps for both
+VERA and Assemblage, the RanDS-finetuned parent, new dates, and a separate
+validation set are adaptations requiring explicit documentation and approval.
+Current cohort timestamps do not yet establish a feasible balanced temporal
+release; no new split policy has been approved.
+
+`malweave data exe-token-audit` consumes a private CSV with
+`exe_sha256,exe_bytes,bucket,key` (additional source-membership columns may be
+retained). It streams each distinct complete EXE to verify its digest/size,
+keeps only the input byte prefix in memory, and applies the parent's verified
+tokenizer through `ReleasedExeTokenizer`. Per-EXE outcomes are committed to
+SQLite for resume; failures are retained and reported, not silently retried or
+admitted. Token digests use the frozen RanDS length-prefixed little-endian
+encoding. A completed processing pass with failures is not a passing release
+audit. This command does not select splits or train a model; its results still
+need joining to source membership and parent exposure groups.
+
+`malweave data vera-presplit --manifest OBJECTS.csv --eligibility ELIGIBILITY.csv
+--token-results TOKENS.csv --output-dir OUTPUT` implements ordered pre-split
+full-EXE then final-token deduplication. The reviewed eligibility table requires
+`dataset,source_sha256,arch,packed,timestamp_utc,evidence_reference`; only explicit
+`I386` and `packed=false` are admitted. Missing evidence is accounted separately,
+never assumed negative. Timestamp values must already be normalized UTC by the
+eligibility exporter. Representative order is earliest timestamp, then source
+digest (dataset breaks any remaining tie); using PE timestamps rather than RanDS
+metadata years remains a documented adaptation. Outputs retain source/state
+membership even when a duplicate is not selected. This does not resolve variant
+membership, select temporal cutoffs, undersample, or constitute a training release.
+The actual VERA static-feature CSV has a machine field but no packing field;
+an inspected LIEF report explicitly marks DiE as not run. Admission evidence
+preparation is therefore still required before a real pre-split export.
+
+`malweave data vera-admission --manifest INVENTORY.csv --output-dir JOB
+--bucket PRIVATE_BUCKET --die /path/to/diec --workers 2` collects the missing
+static RAW evidence. Admission validates unique source identities, positive sizes
+and pinned ETags before scanning. Each downloaded RAW is fully SHA-256/size
+verified before `file` and recursive/deep/heuristic DiE; samples are never executed.
+Complete compressed reports are durably written before SQLite outcomes. Ordinary
+resume retains failed/unknown outcomes. SIGINT/SIGTERM drains the bounded batch.
+The job pins tool-installation file digests, version output and assessment code;
+`release-audit.json` describes scan admission, not training eligibility. Final
+summary reports failures, state/architecture/packing coverage, runtime and evidence
+bytes. Output remains private/local; it is not yet a published S3 evidence release.
+The pilot-tested scanner timeout is 60 seconds per mode; this collected DiE
+evidence is not identical provenance to RanDS metadata's `Packed` field and must
+not be described as such. Negative evidence requires all modes to succeed.
 
 `training/lmlm_checkpoint.py` loads released **EXE bidirectional Mamba MLM** checkpoints.
 Architecture dimensions come from `config.json`, including the padded vocabulary;
