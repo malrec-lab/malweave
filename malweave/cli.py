@@ -79,6 +79,17 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     data = commands.add_parser("data", help="Inspect and prepare research datasets.")
     data_commands = data.add_subparsers(dest="data_command", required=True)
+    rawmal = data_commands.add_parser("rawmal-die", help="Statically assess RawMal PE packing.")
+    rawmal.add_argument("action", choices=("run", "status", "publish"))
+    rawmal.add_argument("--job-dir", type=Path, required=True)
+    rawmal.add_argument("--bucket", default=os.environ.get("MALWEAVE_RAWMAL_S3_BUCKET"))
+    rawmal.add_argument("--cohort", default="format=pe,pe_machine=0x014c")
+    rawmal.add_argument("--workers", type=int)
+    rawmal.add_argument("--limit", type=int)
+    rawmal.add_argument("--retry-unknown", action="store_true")
+    rawmal.add_argument("--publish-prefix")
+    rawmal.add_argument("--max-file-bytes", type=int, default=256 * 1024**2)
+    rawmal.add_argument("--max-inflight-bytes", type=int, default=4 * 1024**3)
     rands_die = data_commands.add_parser(
         "rands-die", help="Stream S3 RanDS PEs through LMLM DiE checks with durable progress."
     )
@@ -691,6 +702,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     _load_project_environment()
 
     try:
+        if args.command == "data" and args.data_command == "rawmal-die":
+            from botocore.exceptions import BotoCoreError, ClientError
+
+            from malweave.data.rawmal_die import publish_rawmal_die, run_rawmal_die
+
+            if args.action == "status":
+                print((args.job_dir / "progress.json").read_text())
+                return 0
+            try:
+                if args.action == "publish":
+                    if not args.publish_prefix:
+                        raise SorelError("Pass --publish-prefix rawmal-filtered-<version>.")
+                    result = publish_rawmal_die(
+                        args.job_dir,
+                        args.publish_prefix,
+                        8 if args.workers is None else args.workers,
+                    )
+                else:
+                    bucket = args.bucket or os.environ.get("MALWEAVE_RAWMAL_S3_BUCKET")
+                    if not bucket:
+                        raise SorelError("Pass --bucket or set MALWEAVE_RAWMAL_S3_BUCKET.")
+                    if args.publish_prefix:
+                        raise SorelError("Use the separate publish action for S3 writes.")
+                    result = run_rawmal_die(
+                        args.job_dir,
+                        bucket=bucket,
+                        cohort=args.cohort,
+                        workers=64 if args.workers is None else args.workers,
+                        limit=args.limit,
+                        max_file_bytes=args.max_file_bytes,
+                        max_inflight_bytes=args.max_inflight_bytes,
+                        retry_unknown=args.retry_unknown,
+                    )
+            except (BotoCoreError, ClientError) as error:
+                raise SorelError(
+                    "RawMal S3 request failed; check permissions and network."
+                ) from error
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
         if args.command == "data" and args.data_command == "rands-ghidra":
             if args.action == "status":
                 print((args.job_dir / "progress.json").read_text())

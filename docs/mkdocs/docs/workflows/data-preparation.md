@@ -16,6 +16,37 @@ and cohort/split policy before reuse. Existing scratch preparation choices do no
 automatically define checkpoint evaluation. Do not repeat conversion merely because an
 older guide starts with data preparation.
 
+## RawMal packing audit on a local machine
+
+Use the private RawMal bucket and `main/samples.csv`. The pilot defaults to
+PE/I386 without excluding CLR, and selects pending sources in SHA-256 order.
+It is a throughput/health check, not a representative packing-rate estimate.
+
+```bash
+uv run --locked --no-default-groups --group train malweave data rawmal-die run \
+  --bucket "$RAWMAL_BUCKET" --job-dir data/processed/rawmal-die-3.21-v1 \
+  --workers 64 --limit 1000
+```
+
+There is one pool for download and static scanning. Temporary PE files are
+verified by size and SHA-256 before scanning and removed after the SQLite result
+commit. The defaults reserve at most 4 GiB in flight, leave disk headroom and
+record files over 256 MiB as deferred. Review timeout/error counts before removing
+`--limit` to resume; the full run first checks the selected S3 inventory. Resume
+skips recorded outcomes, including failures. The job retains private
+`assessment.csv`, `filtered.csv`, and full scan evidence in SQLite. `filtered.csv`
+requires all three valid negative DiE reports and a successful `file` call.
+
+To retry unresolved download/tool errors after analysis, rerun with
+`--retry-unknown --workers 8` instead of `--limit`. This makes one additional
+attempt per eligible source, archives the old result and evidence, and refreshes
+both CSVs. Repeating the command after interruption skips committed retries.
+
+The run does not write to S3. After a completed audited run, `rawmal-die publish`
+with the same `--job-dir` and an unused `--publish-prefix rawmal-filtered-<version>`
+copies accepted source objects within the private bucket and publishes CSVs.
+Do not reuse the prefix for a different job. The original `raw/` is not modified.
+
 ## Streaming RanDS DiE assessment
 
 `malweave data rands-die` downloads original PEs from the private S3 root in
