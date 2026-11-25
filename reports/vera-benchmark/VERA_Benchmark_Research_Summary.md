@@ -31,14 +31,16 @@ Chi tiết nằm ở [research-outline-detail.md](research-outline-detail.md).
 
 **Đầu ra:** thống kê redundancy, leakage rate, mức thay đổi kết quả khi kiểm soát leakage và giao thức phân chia được công bố cho benchmark.
 
-### RQ2 — Evaluation-Set Sufficiency & Statistical Reliability
-**Câu hỏi:** Kích thước tập test ảnh hưởng ra sao tới độ ổn định và độ chính xác thống kê của kết quả benchmark?
+### RQ2 — PE Region Attribution & Benchmark Interpretability
+**Câu hỏi:** MalConv và MalConv2 dựa vào những vùng thông tin nào của PE khi phát hiện ransomware, và những khác biệt đó cho biết gì về tính đáng tin cậy của kết quả benchmark?
 
-**Thiết kế:** Held-out test **20%**, cân bằng **Active:Latent:Benign = 1:1:2**. Train hai baseline Standard BCE trên development, dự đoán toàn bộ held-out **một lần**, lưu prediction scores. Phân tích các tập con **25%, 50%, 75%, 100%** của held-out; tại các mức nhỏ hơn lặp lấy mẫu phân tầng **200 lần**, dùng đúng cùng sample IDs cho hai mô hình.
+**Thiết kế:** Train hai baseline Standard BCE trên D1 development, đánh giá trên held-out **20%**, cân bằng **Active:Latent:Benign = 1:1:2**. Lưu predictions và tính **Integrated Gradients (IG) trong không gian embedding**, ánh xạ về **Header, Executable, Non-executable, Overlay** trên cùng PE files. Mục tiêu là kiểm toán vùng thông tin ảnh hưởng đến dự đoán, không chỉ minh họa một vài heatmaps.
 
-**Đo lường:** biến thiên F1/Recall/FPR/AUROC, khoảng tin cậy **95%**, độ ổn định thứ hạng/chênh lệch MalConv–MalConv2. Resampling cần xét similarity groups; lặp lấy mẫu từ một pool **không** tương đương có thêm dữ liệu test độc lập. Mức 100% chỉ là một full test set.
+**Thí nghiệm:** (E2.1) Region Attribution Mapping; (E2.2) Attribution Concentration — so tỷ trọng attribution với tỷ trọng bytes của vùng; (E2.3) Cross-Model Attribution Agreement trên cùng sample IDs; (E2.4) Attribution vs Prediction Errors, phân tích riêng Active/Latent và benign. **E2.3/E2.4 là trọng tâm.** Báo cáo phân bố, độ bất định có xét similarity groups và độ ổn định theo baseline/số bước IG; không chỉ dùng trung bình hoặc heatmaps.
 
-**Đầu ra:** báo cáo độ bất định theo kích thước test, fixed test manifest và quy tắc đánh giá có thể tái lập. Không mặc định held-out hiện có đủ để ước lượng FPR cực thấp thật chính xác.
+**Đầu ra:** giao thức PE-region attribution tái lập, region profiles, agreement giữa hai model và liên hệ với lỗi dự đoán. Chuẩn hóa chỉ theo bytes **thực sự được mô hình xử lý**, ghi rõ vùng không được bao phủ; phân biệt signed attribution và absolute attribution mass. Chốt baseline, target score, mapping vùng và IG convergence trước khi phân tích held-out. Với MalConv2, cần kiểm tra gradient qua chunk selection/max pooling và so với đường tính tham chiếu khả vi trên input tổng hợp nhỏ; gradient tối ưu cho training không tự bảo đảm IG hợp lệ.
+
+**Giới hạn:** F1 tương đương nhưng attribution khác nhau là thông tin bổ sung, **không tự chứng minh shortcut, quan hệ nhân quả hay mô hình học đúng ngữ nghĩa ransomware**. RQ2 mới thay thế thí nghiệm test-size cũ; 95% CI của các metrics chung vẫn giữ. Không tune model/threshold/loss dựa vào attribution held-out rồi dùng lại tập đó như đánh giá độc lập.
 
 ### RQ3 — Frequency-Based Active/Latent Loss Reweighting
 **Câu hỏi:** Khi giữ mức mất cân bằng Active/Latent thực tế, việc tính trọng số loss theo tần suất nhóm có cải thiện phát hiện ransomware không?
@@ -66,14 +68,14 @@ Chi tiết nằm ở [research-outline-detail.md](research-outline-detail.md).
 1. **Preprocess & master manifest:** xác thực PE → DiE → whole-file SHA-256 dedup → executable SHA-256 + TLSH toàn PE/executable; lưu thống kê và similarity groups.
 2. **Tạo partition:** 80/20 theo P3; từ development tạo D1 (**RQ1/RQ2**) và D2 (**RQ3**). Giữ một held-out test cân bằng dùng cho RQ2/RQ3.
 3. **RQ1:** audit duplicates → đo leakage P1/P2/P3 → chạy các baseline 10-fold → controlled comparison E1.5.
-4. **RQ2:** CV chọn epoch trên D1 → full train Standard BCE → lưu predictions held-out → chạy toàn bộ phân tích statistical reliability **không train lại cho từng test size**.
+4. **RQ2:** CV chọn epoch trên D1 → full train Standard BCE → lưu predictions held-out → IG region mapping, concentration, cross-model agreement và error analysis; kiểm tra độ ổn định/convergence, **không train lại cho từng phân tích attribution**.
 5. **RQ3:** train W0/W1 trên D2, đánh giá trên held-out đã cố định, so sánh group recall và trade-offs.
 6. **Benchmark package:** công bố manifest và fold IDs (trong phạm vi được phép), preprocessing/splitting/evaluation scripts, model configs và kết quả thống kê.
 
 ## 5. Paper sẽ trình bày gì?
 
-**Introduction & Related Work → Dataset/Benchmark Construction → Experimental Methodology → RQ1 (duplicate/leakage) → RQ2 (test-size reliability) → RQ3 (loss weighting) → Discussion/Limitations → Conclusion.**
+**Introduction & Related Work → Dataset/Benchmark Construction → Experimental Methodology → RQ1 (data reliability: duplicate/leakage) → RQ2 (model interpretability: PE-region attribution) → RQ3 (learning strategy: loss weighting) → Discussion/Limitations → Conclusion.**
 
-Các kết quả chính để review: **(i)** bảng lượng dữ liệu/duplicates theo từng cấp; **(ii)** bảng leakage và F1/FPR dưới P1–P3; **(iii)** đồ thị độ bất định theo test size; **(iv)** bảng Standard BCE vs weighted BCE và Recall Active/Latent.
+Các kết quả chính để review: **(i)** bảng lượng dữ liệu/duplicates theo từng cấp; **(ii)** bảng leakage và F1/FPR dưới P1–P3; **(iii)** region-attribution profiles, concentration, cross-model agreement và error analysis; **(iv)** bảng Standard BCE vs weighted BCE và Recall Active/Latent.
 
-**Giá trị nghiên cứu:** Không đề xuất một kiến trúc phát hiện ransomware mới; đóng góp là **giao thức benchmark có kiểm soát leakage, đánh giá độ tin cậy thống kê và các baseline có thể tái lập**. Mọi kết luận phải giới hạn trong dữ liệu và nguồn hiện được sử dụng.
+**Giá trị nghiên cứu:** Không đề xuất kiến trúc hay phương pháp IG mới; đóng góp là **giao thức benchmark có kiểm soát leakage, kiểm toán PE-region attribution có thể tái lập và các baseline/loss comparisons được đánh giá có độ bất định thống kê**. Mọi kết luận phải giới hạn trong dữ liệu và nguồn hiện được sử dụng.
