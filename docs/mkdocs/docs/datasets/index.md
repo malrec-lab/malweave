@@ -1,15 +1,18 @@
 # Malware Datasets
 
-This directory records datasets considered for malware machine-learning research. Each dataset has its own page covering its contents, access method, loading steps, evaluation considerations, safety restrictions, and official references.
+The table identifies the source cohorts used by the shared audits and their possible
+roles in the current paper. See the [S3 and local artifact map](s3-layout.md) for the
+verified inventory and EXE manifest locations.
 
-## Dataset Index
+## Dataset index
 
-| Dataset | Platform | Primary use | Documentation |
+| Dataset | CLI ID | Scope and research role | Documentation |
 | --- | --- | --- | --- |
-| Assemblage | Windows PE and Linux ELF | Benign-binary pretraining, function analysis, and provenance | [Assemblage](assemblage.md) |
-| BODMAS | Windows Portable Executable (PE) | Static-feature detection, family classification, and temporal analysis | [BODMAS](bodmas.md) |
-| RanDS | Windows Portable Executable (PE) | Ransomware detection, family classification, and static/dynamic feature research | [RanDS](rands.md) |
-| SOREL-20M | Windows Portable Executable (PE) | Large-scale static detection, tag prediction, and temporal evaluation | [SOREL-20M](sorel-20m.md) |
+| RanDS | `rands` | Primary ransomware-versus-benign dataset. The new split is pending. | [RanDS](rands.md) |
+| VERA | `vera` | Ransomware repository. Active/latent are dataset states, so external evaluation needs a clearly stated population and overlap check. | [Zenodo record](https://doi.org/10.5281/zenodo.17904705) · [Local artifacts](s3-layout.md#local-audit-inputs-and-evidence) |
+| RawMal-TF | `rawmal` | Malware with type and family task branches. The shared audit uses the PE subset. Secondary-task use is proposed. | [Local artifacts](s3-layout.md#local-audit-inputs-and-evidence) |
+| Assemblage | `assemblage` | Windows binaries built from open-source projects. Confirm project provenance before a project-disjoint split. | [Assemblage](assemblage.md) |
+| SOREL-20M | — | Separate, paused conversion pilot. | [SOREL-20M](sorel-20m.md) |
 
 ## Documentation Rules
 

@@ -24,6 +24,17 @@ class MalConvGCTConfig:
     num_labels: int = 2
     chunk_size: int = 65_536
     min_chunk_size: int = 1_024
+    implementation: str = "original"
+
+    def __post_init__(self) -> None:
+        if self.implementation not in {"original", "lmlm"}:
+            raise ValueError("MalConvGCT implementation must be original or lmlm.")
+
+    @property
+    def embedding_padding_idx(self) -> int | None:
+        # RawByteClf's config constructor loses pad_token_id before embedding
+        # construction. Tokenizer/batch padding remains ID 0 in both versions.
+        return None if self.implementation == "lmlm" else self.pad_token_id
 
 
 class _LowMemoryConvBase(nn.Module):
@@ -60,7 +71,9 @@ class _LowMemoryConvBase(nn.Module):
         winner_values: Tensor | None = None
         winner_indices: Tensor | None = None
         start = 0
-        end = min(self.chunk_size, length)
+        # Upstream starts with the nominal chunk size, so short inputs still
+        # enter the first scan after receptive-field padding. Clamp later chunks.
+        end = self.chunk_size
         with torch.no_grad():
             while start < end and end - start >= max(self.min_chunk_size, receptive_field):
                 activations = self.process_range(
@@ -72,12 +85,12 @@ class _LowMemoryConvBase(nn.Module):
                 values = values[..., 0]
                 indices = indices[..., 0] * self.stride + start
                 if winner_values is None:
-                    winner_values = values
-                    winner_indices = indices
-                else:
-                    selected = winner_values < values
-                    winner_values = torch.where(selected, values, winner_values)
-                    winner_indices = torch.where(selected, indices, winner_indices)
+                    # Preserve upstream's -1 sentinel, including all-negative chunks.
+                    winner_values = torch.full_like(values, -1.0)
+                    winner_indices = torch.zeros_like(indices)
+                selected = winner_values < values
+                winner_values = torch.where(selected, values, winner_values)
+                winner_indices = torch.where(selected, indices, winner_indices)
                 start = end
                 end = min(start + self.chunk_size, length)
         if winner_indices is None:
@@ -106,7 +119,7 @@ class _MalConvML(_LowMemoryConvBase):
     def __init__(self, config: MalConvGCTConfig, out_size: int) -> None:
         super().__init__(config)
         self.embedding = nn.Embedding(
-            config.vocab_size, config.embedding_size, padding_idx=config.pad_token_id
+            config.vocab_size, config.embedding_size, padding_idx=config.embedding_padding_idx
         )
         self.convs = nn.ModuleList(
             [
@@ -155,8 +168,9 @@ class _MalConvGCT(_LowMemoryConvBase):
 
     def __init__(self, config: MalConvGCTConfig) -> None:
         super().__init__(config)
+        self.implementation = config.implementation
         self.embedding = nn.Embedding(
-            config.vocab_size, config.embedding_size, padding_idx=config.pad_token_id
+            config.vocab_size, config.embedding_size, padding_idx=config.embedding_padding_idx
         )
         self.context_net = _MalConvML(config, out_size=config.channels)
         self.convs = nn.ModuleList(
@@ -213,7 +227,15 @@ class _MalConvGCT(_LowMemoryConvBase):
 
     def forward(self, input_ids: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         # seq2fix already scans non-winning chunks under no_grad and recomputes winning windows.
-        context = self.context_net.seq2fix(input_ids)
+        if self.implementation == "lmlm":
+            # Reproduce the pinned custom CheckpointFunction's disconnected
+            # context output. Keep requires_grad flags/state layout like source;
+            # these parameters naturally have grad=None and AdamW skips them.
+            with torch.no_grad():
+                context = self.context_net.seq2fix(input_ids)
+        else:
+            # Original MalConvGCT_nocatTrain.py explicitly uses low_mem=False.
+            context = self.context_net.seq2fix(input_ids)
         post_conv = hidden = self.seq2fix(input_ids, global_context=context)
         penultimate = hidden = F.leaky_relu(self.fc_1(hidden))
         return self.fc_2(hidden), penultimate, post_conv

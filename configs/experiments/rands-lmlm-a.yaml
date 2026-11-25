@@ -1,0 +1,28 @@
+# A evaluates the published detector intact; no optimizer, new head or RanDS fitting.
+experiment:
+  dataset: rands
+  kind: benchmark
+  name: lmlm-a-metadata-round02
+  protocol: lmlm_a
+cohort:
+  eligibility: rands_metadata
+  arch: I386
+  packed: false
+  train_years: [2006, 2023]
+  validation_years: [2024, 2024]
+  test_years: [2025, 2025]
+  train_balance: fixed_random_undersampling
+  deduplication: exact_model_tokens_after_full_exe
+  seed: 0
+inputs:
+  exe:
+    max_bytes: 65536
+    max_tokens: 65536
+evaluation:
+  partition: test
+  precision: fp32
+  batch_size: 1
+  decision_rule: argmax
+  bootstrap: {replicates: 2000, confidence: 0.95, seed: 0}
+runtime:
+  mamba_fast_path_required: true

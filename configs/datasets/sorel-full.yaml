@@ -1,0 +1,29 @@
+# Approved 2026-10-25 protocol; old round-robin jobs are incompatible.
+protocol: sorel-exe-v3.1
+release: 09-DEC-2020
+partition_count: 5
+partition_index: 1
+architecture_policy: x86_verified
+file_timeout_seconds: 10
+die_timeout_seconds: 10
+die_attempts: 3
+lief_timeout_seconds: 10
+lief_attempts: 3
+request_timeout_seconds: 120
+connect_timeout_seconds: 20
+request_attempts: 3
+runtime:
+  workers: 0                    # Resolve from CPU affinity/cgroup and available memory.
+  fetch_batch: 0                # Resolve to 4 x workers; this is not a processing barrier.
+  upload_workers: 2
+  upload_sources: 64
+  upload_bytes: 33554432
+  upload_interval_seconds: 10
+  upload_queue_sources: 0       # Resolve to max(2 x upload_sources + workers, 4 x workers).
+  upload_timeout_seconds: 900   # Initial benchmark setting; tune from target measurements.
+  checkpoint_seconds: 1800
+  progress_seconds: 5
+  memory_budget_bytes: 0
+  memory_per_task_bytes: 0
+  disk_budget_bytes: 0
+  min_free_bytes: 5368709120

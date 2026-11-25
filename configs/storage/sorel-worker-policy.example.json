@@ -1,0 +1,34 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "InspectSorelPrefixOnly",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::YOUR-RESEARCH-BUCKET",
+      "Condition": {"StringLike": {"s3:prefix": ["malweave/datasets/sorel-20m/09-DEC-2020/exe-v1/", "malweave/datasets/sorel-20m/09-DEC-2020/exe-v1/*"]}}
+    },
+    {
+      "Sid": "InspectBucketRegion",
+      "Effect": "Allow",
+      "Action": "s3:GetBucketLocation",
+      "Resource": "arn:aws:s3:::YOUR-RESEARCH-BUCKET"
+    },
+    {
+      "Sid": "ReadWriteSorelCollection",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+      "Resource": "arn:aws:s3:::YOUR-RESEARCH-BUCKET/malweave/datasets/sorel-20m/09-DEC-2020/exe-v1/*"
+    },
+    {
+      "Sid": "CleanLocksObsoleteSnapshotsAndTextProbes",
+      "Effect": "Allow",
+      "Action": "s3:DeleteObject",
+      "Resource": [
+        "arn:aws:s3:::YOUR-RESEARCH-BUCKET/malweave/datasets/sorel-20m/09-DEC-2020/exe-v1/v3*/part-*/main/owner.json",
+        "arn:aws:s3:::YOUR-RESEARCH-BUCKET/malweave/datasets/sorel-20m/09-DEC-2020/exe-v1/v3*/part-*/main/snapshots/*",
+        "arn:aws:s3:::YOUR-RESEARCH-BUCKET/malweave/datasets/sorel-20m/09-DEC-2020/exe-v1/checks/*"
+      ]
+    }
+  ]
+}

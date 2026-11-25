@@ -1,20 +1,35 @@
 # SOREL-20M Malware Dataset
 
+> Role: registered malware PE subset for the [paused self-pretraining direction](../workflows/self-pretraining.md). Raw benign
+> binaries are not publicly released. Read selected binaries in batches; the full raw corpus is not
+> required locally. See [data preparation](../workflows/data-preparation.md).
+
 ## Overview
 
-**SOREL-20M** (Sophos-ReversingLabs 20 Million) is a large benchmark for static Windows Portable Executable (PE) malware detection. Released by Sophos and ReversingLabs in December 2020, it provides nearly 20 million labelled PE records, pre-extracted EMBER v2 features, PE metadata, vendor-derived behavioral tags, baseline models, and approximately 9.92 million disarmed malware binaries.
+**SOREL-20M** (Sophos-ReversingLabs 20 Million) is a large benchmark for static Windows Portable Executable (PE) malware detection. Released by Sophos and ReversingLabs in December 2020, it provides nearly 20 million labelled PE records, pre-extracted EMBER v2 features, PE metadata, vendor-derived behavioral tags, baseline models, and roughly ten million disarmed malware binaries. An indexed malware row does not independently establish that its binary object remains available.
 
 It is suited to large-scale binary classification, multi-task learning with behavior-like tags, and time-aware evaluation. It is not a current threat feed: the data was collected from **2017-01-01 through 2019-04-10**.
 
 | Item | Quantity |
 | --- | ---: |
-| Total labelled PE records | 19,389,877 |
-| Malware records / disarmed malware binaries | 9,919,251 |
-| Benign records | 9,470,626 |
+| Full `meta.db` records, locally counted | 19,724,997 |
+| Malware metadata records | 9,962,820 |
+| Benign metadata records | 9,762,177 |
+| Records with EMBER features | 19,389,877 |
 | Raw benign binaries released | 0 |
 | Behavioral tag targets | 11 |
 
-The benchmark paper and the official `meta.db` index are authoritative for the exact local record count. The supplied class counts sum to 19,389,877; the paper describes the corpus as "nearly 20 million."
+Local audit on **2026-10-18** counted the complete 3,788,979,200-byte `meta.db`: SQLite quick-check
+passed, with no malformed or duplicate IDs. The official
+[missing-feature list](https://github.com/sophos-ai/SOREL-20M/blob/master/shas_missing_ember_features.json)
+contains **335,120** unique IDs, all matched against the local metadata: 291,551 benign and 43,569
+malware. Removing them gives **9,470,626 benign + 9,919,251 malware = 19,389,877 records**.
+Those feature-available counts must not be presented as the full metadata or a verified S3 binary
+inventory. EXE preparation does not require EMBER and does not exclude these IDs automatically.
+
+Static checks on released PEs did not establish ISA with `file`, consistent with the modified
+headers. Resolve the architecture policy before corpus conversion; PE32 alone does not establish
+x86. Some indexed binaries can return HTTP 404, so retain explicit missing-input outcomes.
 
 ## Access, License, and Safety
 
@@ -28,7 +43,10 @@ Read the [official terms of use](https://github.com/sophos-ai/SOREL-20M/blob/mas
 
 ## Official Resources and Retrieval
 
-The data bucket is public and no AWS credentials are required. The release root is:
+The data bucket is public and no AWS credentials are required. For this study, download
+`processed-data/meta.db` and read selected `binaries/` objects; the EMBER/LightGBM baseline examples
+below are optional reference material. `meta.db` is 3,788,979,200 bytes (about 3.8 GB / 3.53 GiB);
+the upstream README rounds its size to 3.5 GB. The release root is:
 
 ```text
 s3://sorel-20m/09-DEC-2020/
@@ -48,13 +66,10 @@ The upstream code targets Python 3.6+ and uses Conda. It links a SQLite metadata
 Use the AWS CLI to retrieve only the artifacts needed. `--no-sign-request` makes the intended anonymous access explicit:
 
 ```bash
-mkdir -p data/sorel-20m/processed-data/ember_features
+mkdir -p data/sorel-20m/processed-data
 aws s3 cp --no-sign-request \
   s3://sorel-20m/09-DEC-2020/processed-data/meta.db \
   data/sorel-20m/processed-data/meta.db
-aws s3 sync --no-sign-request \
-  s3://sorel-20m/09-DEC-2020/processed-data/ember_features/ \
-  data/sorel-20m/processed-data/ember_features/
 ```
 
 Set `db_path` in the cloned repository's `config.py` to the directory containing `meta.db`; use a local checkpoint directory rather than the upstream example path.

@@ -1,8 +1,8 @@
 # Onboarding a Research Task
 
-MalWeave separates data preparation, reusable components, and declared experiments. Read the
-[research workstreams](workflows/research-workstreams.md) to identify which boundary a task owns;
-do not make unrelated work wait for a linear gate.
+Read the [research overview](workflows/research-protocol.md) for the current study
+design and status. Use the MalWeave workflow guides for implementation and
+operations.
 
 ## Start With the Task Boundary
 
@@ -14,8 +14,8 @@ Write one sentence stating the input, output, and research purpose. Then classif
 | Component | Reusable adapter, model, loss, metric, visualization, or utility | A result-specific dataset decision |
 | Experiment | Configured combination of prepared data and components | Changes after observing benchmark results |
 
-Raw PE files may be live malware. Never execute, preview, commit, upload, or redistribute them.
-Use synthetic fixtures in all tests.
+Treat raw PEs as data for static analysis. Use authorized private storage and synthetic test
+fixtures. Keep samples, sample identities and derived representations outside Git.
 
 ## Working Sequence
 
@@ -45,10 +45,14 @@ Use synthetic fixtures in all tests.
 | Regression tests | `tests/` mirroring source | Yes |
 | Checkpoints, predictions, reports | private artifact root | No |
 
-## RanDS Example
+## Research decisions and documentation
 
-The existing RanDS data pipeline audits the release, extracts full-corpus EXE bytes, and creates
-RAW/EXE product manifests. It can run independently of model work. The
-MalConvGCT, HRRFormer, and Mamba ports can be developed and tested with synthetic bytes on a local
-machine. A RanDS benchmark config later chooses which prepared representation, tokenizer, split,
-and evaluation policy to use.
+Use the relevant direction plan for verified findings, approved choices and pending proposals.
+An implemented default is not a researcher decision. Discuss new scientific choices before
+encoding them in experiment configs. Keep commands in workflow guides, measurements in
+execution notes and code capabilities in project structure; link rather than duplicate them.
+Do not create additional status/report pages for routine updates.
+
+For the current study, review audit coverage and freeze the cohort and split under the
+approved protocol before training. Record experiment decisions in the
+researcher-maintained study records, not in this repository.

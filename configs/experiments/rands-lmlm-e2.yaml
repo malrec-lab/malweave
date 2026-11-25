@@ -1,0 +1,52 @@
+# Approved E2 baseline; data transfer and a long Kaggle run are separate steps.
+experiment:
+  dataset: rands
+  kind: benchmark
+  name: lmlm-e2-metadata-round02
+  protocol: lmlm_e2
+cohort:
+  eligibility: rands_metadata
+  arch: I386
+  packed: false
+  train_years: [2006, 2023]
+  validation_years: [2024, 2024]
+  test_years: [2025, 2025]
+  train_balance: fixed_random_undersampling
+  deduplication: exact_model_tokens_after_full_exe
+  seed: 0
+inputs:
+  raw:
+    # Includes BOS/EOS: at most 1,048,574 original bytes are visible.
+    max_tokens: 1048576
+    encoding: {byte_offset: 7, bos_token_id: 3, eos_token_id: 4, pad_token_id: 0}
+runtime:
+  gradient_checkpointing: false
+supervision:
+  selection: {checkpoint: validation_roc_auc, threshold: argmax}
+  early_stopping: {patience: 3, min_delta: 0}
+  bootstrap: {replicates: 2000, confidence: 0.95, seed: 0}
+tracks:
+  malconvgct:
+    architecture:
+      implementation: lmlm
+      vocab_size: 264
+      embedding_size: 8
+      channels: 256
+      stride: 64
+      kernel_size: 64
+      layers: 1
+      pad_token_id: 0
+      num_labels: 2
+      chunk_size: 65536
+      min_chunk_size: 1024
+    training:
+      epochs: 15
+      batch_size: 64
+      effective_batch_size: 64
+      precision: fp32
+      optimizer:
+        learning_rate: 0.001
+        weight_decay: 0.01
+        betas: [0.9, 0.999]
+        epsilon: 1.0e-8
+      scheduler: {type: linear, warmup_ratio: 0.05, max_grad_norm: 1.0}

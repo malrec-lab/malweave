@@ -7,11 +7,22 @@
 - Distinguish a faithful paper protocol from a dataset or methodology extension. Record every
   intentional divergence in configuration and maintained documentation.
 
+## Language
+
+- All maintained documentation (README files, mkdocs pages, run README/RESULTS summaries)
+  is written in English. Chat discussion with the researcher may stay in Vietnamese.
+- Historical evidence and third-party texts are kept as recorded. When a document is
+  translated, the translation must carry a dated translation note; raw evidence files
+  (logs, JSON receipts, inventories) are never rewritten.
+
 ## Safety
 
-- Treat raw PE files as live malware. Never execute, upload, redistribute, preview, or open them
-  with interactive applications.
-- Read raw samples only when the task requires static inspection. Do not modify them in place.
+- Treat raw PE files as live malware and handle them as data for authorized research.
+  Static inspection, dataset preparation, model training on their bytes, and transfers to the
+  researcher's authorized private storage or GPU/Kaggle environments are permitted within the
+  requested task scope. Keep samples access-controlled; do not publicly redistribute them.
+- Never execute samples or open them with interactive applications. Read them only as needed
+  for the requested static analysis or training workflow. Do not modify source samples in place.
 - Never commit raw samples, sample hashes, sample inventories, private URLs, credentials,
   extracted representations, checkpoints, or run artifacts.
 - Tests must use synthetic, redistributable fixtures. Do not copy real malware bytes into tests.
@@ -24,6 +35,11 @@
 - Split data before fitting tokenizers, normalizers, feature selectors, resampling, or tuning.
 - Prevent the same source or equivalent representation group from crossing data splits.
 - Report missing, malformed, filtered, and failed samples; never silently discard them.
+- Preserve per-source evidence from the LMLM tools (`file`, DiE recursive/deep/heuristic, LIEF):
+  command/output/error and tool identity, complete DiE reports, LIEF structured PE output and
+  section extraction ranges/warnings. Link reports by source/input/output digests and retain
+  evidence for rejected samples. Statistics and exports must be rebuildable without rescanning.
+  Mark missing historical evidence explicitly; never reconstruct it from summary claims.
 - Keep dataset-specific assumptions in committed config and dataset/workflow documentation.
 
 ## Implementation
@@ -46,8 +62,17 @@
 ## Task Routing
 
 - Read `docs/mkdocs/docs/datasets/rands.md` before changing RanDS handling.
-- Read `docs/mkdocs/docs/workflows/lmlm-rands.md` before changing the LMLM-on-RanDS workflow.
-- Read `docs/mkdocs/docs/workflows/research-workstreams.md` before planning an LMLM-on-RanDS task.
-  Keep data preparation, reusable components, and experiments independently scoped.
+- Read `docs/mkdocs/docs/workflows/data-preparation.md` before changing PE/EXE data preparation.
+- Read `docs/mkdocs/docs/workflows/research-protocol.md` before changing research work. The
+  current Mini/Tiny BiMamba study design is owned and maintained outside this repository.
+  A/C/E1/E2 are earlier RanDS runs. Self-pretraining and SOREL conversion remain paused.
+- Distinguish verified facts, researcher-approved choices and pending proposals. Existing code
+  or config is not scientific approval. Discuss new research choices before implementing them.
+- Keep the current paper design and decisions outside this repository, runnable commands in
+  MalWeave's workflow guides and measured results in their private run artifacts. Link to
+  maintained content.
+- Remove obsolete documentation instead of archiving it. When continued relevance or decision
+  status is unclear, ask the researcher before keeping or removing it. Preserve results and
+  evidence that support reproducibility.
 - Read `docs/mkdocs/docs/development/environment.md` before changing dependencies or supported
   Python/tool versions.
