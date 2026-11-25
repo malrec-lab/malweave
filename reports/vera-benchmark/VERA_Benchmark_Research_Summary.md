@@ -34,6 +34,9 @@ Chi tiết nằm ở [research-outline-detail.md](research-outline-detail.md).
 ### RQ2 — PE Region Attribution & Benchmark Interpretability
 **Câu hỏi:** MalConv và MalConv2 dựa vào những vùng thông tin nào của PE khi phát hiện ransomware, và những khác biệt đó cho biết gì về tính đáng tin cậy của kết quả benchmark?
 
+- **Tầng 1 — Explainability:** Mô hình sử dụng thông tin từ vùng PE nào?
+- **Tầng 2 — Benchmark Reliability:** Hai mô hình có F1 tương đương nhưng dựa vào những vùng PE khác nhau không? Liệu benchmark chỉ báo cáo F1 có bỏ sót khác biệt quan trọng này?
+
 **Thiết kế:** Tái sử dụng **Standard BCE P3 checkpoints và out-of-fold (OOF) predictions từ RQ1** trên D1 (**Active:Latent:Benign = 1:1:2** toàn tập; tỷ lệ từng fold có thể xấp xỉ do groups). Mỗi file được giải thích bằng checkpoint của outer fold mà file/similarity group đó không tham gia training hoặc inner validation. Tính **Integrated Gradients (IG) trong không gian embedding**, ánh xạ về **Header, Executable, Non-executable, Overlay** trên cùng PE files. Không cần thêm vòng training riêng cho RQ2 khi protocol khớp.
 
 **Thí nghiệm:** (E2.1) Region Attribution Mapping; (E2.2) Attribution Concentration — so tỷ trọng attribution với tỷ trọng bytes của vùng; (E2.3) Cross-Model Attribution Agreement trên cùng sample IDs; (E2.4) Attribution vs Prediction Errors, phân tích riêng Active/Latent và benign. **E2.3/E2.4 là trọng tâm.** Báo cáo phân bố, độ bất định có xét similarity groups và độ ổn định theo baseline/số bước IG; không chỉ dùng trung bình hoặc heatmaps.

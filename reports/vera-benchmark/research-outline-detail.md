@@ -173,6 +173,9 @@ Chỉ dùng cặp tương đồng thực sự tồn tại. Đây là thí nghi�
 
 **Mục tiêu:** Kiểm toán vùng PE ảnh hưởng đến dự đoán và xem bảng F1 có che khuất khác biệt attribution giữa hai mô hình hay không. Tầng explainability mô tả attribution; tầng benchmark reliability đối chiếu attribution với hiệu suất, agreement và lỗi. **E2.3/E2.4 là trọng tâm**, không chỉ vẽ heatmaps vài file.
 
+- **Tầng 1 — Explainability:** Mô hình sử dụng thông tin từ vùng PE nào?
+- **Tầng 2 — Benchmark Reliability:** Hai mô hình có F1 tương đương nhưng dựa vào những vùng PE khác nhau không? Liệu benchmark chỉ báo cáo F1 có bỏ sót khác biệt quan trọng này?
+
 **Dataset:** D1 — Active:Latent:Benign = 1:1:2.
 
 **Evaluation:** D1 P3 outer-test folds; tái sử dụng OOF checkpoints/predictions từ RQ1 khi training protocol khớp.
