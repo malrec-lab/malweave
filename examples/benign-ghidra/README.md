@@ -1,7 +1,10 @@
 # Benign Ghidra E2E Fixture
 
-This directory contains source code for a deterministic, synthetic PE fixture used only by the
-Docker e2e worker test. It never contains a downloaded or executable third-party sample.
+> Synthetic integration fixtures for the approved RanDS DIS/DEC preparation task.
+
+This directory contains source code for deterministic synthetic PE fixtures used by
+local verification and the Docker e2e worker test. It never contains a downloaded
+third-party sample.
 
 `create_fixture.py` writes three minimal x86 PE files with `NOP; RET` entry points, their private
 RanDS-shaped metadata, and a matching local dataset config. Two rows are benign and one is labelled

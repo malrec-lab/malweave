@@ -1,5 +1,8 @@
 # Ghidra lifting scripts
 
+> DIS/DEC extraction tooling. The researcher approved a separate RanDS extraction pool;
+> see the maintained [data workflow](../docs/mkdocs/docs/workflows/data-preparation.md).
+
 `Lifter.java`, `Disassembler.java`, `Decompiler.java`, and
 `SetAnalysisOptionsForDisassembly.java` are verbatim ports of the Ghidra scripts from
 RawByteClf commit `2502450e40ac00363e168106662aac29821d4a93`, the accompanying code release

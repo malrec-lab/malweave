@@ -33,6 +33,7 @@ class HRRFormerConfig:
     position_embedding_type: str = "absolute"
     fft_norm: str = "backward"
     gradient_checkpointing: bool = False
+    mask_padding: bool = False
 
     def __post_init__(self) -> None:
         heads = (
@@ -116,6 +117,7 @@ class _HRRSelfAttention(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.is_decoder = config.is_decoder
         self.fft_norm = config.fft_norm
+        self.mask_padding = config.mask_padding
         self.rotary = (
             _RotaryEmbedding(self.head_size)
             if config.position_embedding_type == "rotary"
@@ -135,6 +137,8 @@ class _HRRSelfAttention(nn.Module):
         superpositions = _binding(
             key.to(torch.float32), value.to(torch.float32), norm=self.fft_norm, n=padded_dimension
         )[..., : self.head_size]
+        if self.mask_padding and attention_mask is not None:
+            superpositions = superpositions * attention_mask.permute(0, 1, 3, 2)
         # RawByteClf's causal branch superposes prefixes; bidirectional uses one global sum.
         if self.is_decoder and attention_mask is not None:
             superposition = torch.cumsum(superpositions, dim=-2)
@@ -145,7 +149,12 @@ class _HRRSelfAttention(nn.Module):
         )[..., : self.head_size]
         scores = _cosine_similarity(value.to(torch.float32), approximation).to(key.dtype)
         if attention_mask is not None:
-            scores = scores + attention_mask.permute(0, 1, 3, 2)
+            mask = attention_mask.permute(0, 1, 3, 2)
+            scores = (
+                scores.masked_fill(mask == 0, torch.finfo(scores.dtype).min)
+                if self.mask_padding
+                else scores + mask
+            )
         probabilities = self.dropout(F.softmax(scores, dim=-2))
         context = (probabilities * value).permute(0, 2, 1, 3).contiguous()
         return context.view(*context.shape[:-2], self.heads * self.head_size)
@@ -250,6 +259,10 @@ class HRRFormerForSequenceClassification(nn.Module):
                 torch.arange(input_ids.shape[0], device=input_ids.device), positions
             ]
         else:
-            logits = token_logits.mean(dim=1)
+            if self.config.mask_padding:
+                weights = attention_mask.to(token_logits.dtype).unsqueeze(-1)
+                logits = (token_logits * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1)
+            else:
+                logits = token_logits.mean(dim=1)
         loss = F.cross_entropy(logits, labels) if labels is not None else None
         return SequenceClassifierOutput(loss=loss, logits=logits)
