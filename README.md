@@ -1,35 +1,39 @@
 # MalWeave
 
-MalWeave implements data preparation, model training and evaluation for malware
-language-modeling research.
+Research code for preparing Windows PE datasets and training and evaluating malware
+language models.
 
-## Research workflow
+**[Open the documentation site](https://malrec-lab.github.io/malweave/)**
 
-The current study — the proposed Mini/Tiny BiMamba full-EXE and distillation
-matrix — is designed and tracked outside this repository. MalWeave documents the
-runnable pipeline, the audit status and the earlier RanDS checkpoint experiments.
+GitHub Actions publishes the site from `main`. The guides below open the source
+documentation for the branch you are browsing.
 
-- [Current research and implementation status](docs/mkdocs/docs/workflows/research-protocol.md)
-- [Shared audit and EXE preparation](docs/mkdocs/docs/workflows/data-preparation.md)
-- [Dataset storage on S3](docs/mkdocs/docs/datasets/s3-layout.md)
-- [Earlier A/C/E1/E2 experiments](docs/mkdocs/docs/workflows/lmlm-checkpoints.md)
-- [RanDS scratch baseline](docs/mkdocs/docs/workflows/rands-scratch.md)
+## Find a workflow
 
-## Development setup
+| I want to | Start here |
+| --- | --- |
+| Audit RanDS, VERA, RawMal-TF or Assemblage | [PE audit and EXE preparation](docs/mkdocs/docs/workflows/data-preparation.md) |
+| Find datasets, manifests or audit results | [Dataset catalog](docs/mkdocs/docs/datasets/index.md) and [S3 layout](docs/mkdocs/docs/datasets/s3-layout.md) |
+| Reproduce earlier RanDS experiments | [LMLM checkpoint experiments and MalConvGCT baselines](docs/mkdocs/docs/workflows/lmlm-checkpoints.md) |
+| Find the RanDS scratch baseline | [Paused EXE scratch workflow](docs/mkdocs/docs/workflows/rands-scratch.md) |
+| Follow the proposed full-EXE Mini/Tiny BiMamba study | [Research overview and implementation status](docs/mkdocs/docs/workflows/research-protocol.md) |
+
+## Develop locally
+
+Use uv **0.11.9** and CPython **3.12.12** on Linux or macOS. Run from the repository root.
 
 ```bash
 uv sync --locked
 make check
-make docs-serve
 ```
 
-Use uv **0.11.9**, canonical CPython **3.12.12**, Linux or macOS.
-See [getting started](docs/mkdocs/docs/getting-started.md),
-[environment](docs/mkdocs/docs/development/environment.md) and
+Run `make docs-serve` to preview the documentation at
+[127.0.0.1:8000](http://127.0.0.1:8000/). For setup details and code navigation, see
+[getting started](docs/mkdocs/docs/getting-started.md),
+[environment and dependencies](docs/mkdocs/docs/development/environment.md), and
 [project structure](docs/mkdocs/docs/project-structure.md).
-Dataset descriptions are in the [catalog](docs/mkdocs/docs/datasets/index.md);
-the source paper is in [references](references/papers/lmlm/2026-s103-paper.md).
 
-Reusable source lives in `malweave/`, safe configs in `configs/`, and synthetic tests in
-`tests/`. Data, state, checkpoints and run artifacts stay outside Git.
-Raw PEs may be live malware; follow `AGENTS.md` and use static analysis only.
+Keep private data, credentials, checkpoints and run artifacts outside Git. Treat
+raw PE samples as potentially live malware and handle them only as data for static
+analysis. See [repository instructions](AGENTS.md) and the
+[LMLM paper](references/papers/lmlm/2026-s103-paper.md).
