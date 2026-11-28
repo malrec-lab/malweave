@@ -1,0 +1,48 @@
+experiment:
+  name: rands-exe-scratch-bimamba-lmlm-scale-v3
+  kind: scratch
+  snapshot: '2026-09-02'
+  seed: 42
+# Bidirectional Mamba, following the selected research plan and LMLM IV-B / VI-F.
+# num_hidden_layers is PER DIRECTION: 32 forward + 32 backward, untied weights.
+# RanDS splits/train-only BPE remain dataset/method adaptations.
+data:
+  expected_exe_files: 215040
+  conflict_policy: quarantine_all
+  duplicate_policy: one_representative
+  split_fractions: {train: 0.70, validation: 0.15, test: 0.15}
+tokenizer:
+  vocab_size: 16384
+  max_train_files: 215040
+  max_bytes_per_file: 1048544
+  full_byte_coverage: true
+model:
+  name: mamba
+  max_tokens: 65536
+  architecture:
+    hidden_size: 384
+    num_hidden_layers: 32
+    state_size: 16
+    expand: 2
+    conv_kernel: 4
+    hidden_dropout_prob: 0.0
+    residual_in_fp32: true
+    is_decoder: false
+    bi_tie_directions: false
+    bi_add_directions: true
+training:
+  epochs: 5
+  batch_size: 1
+  gradient_accumulation_steps: 64
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_grad_norm: 1.0
+  precision: bf16
+  gradient_checkpointing: true
+runtime:
+  dataloader_workers: 2
+  cpu_threads: 4
+  progress_seconds: 5
+  checkpoint_updates: 100
+  deterministic: true

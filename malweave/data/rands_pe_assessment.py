@@ -291,8 +291,14 @@ def _find_obfuscation_types(value: Any) -> set[str]:
     found: set[str] = set()
     if isinstance(value, dict):
         type_name = value.get("type")
-        if isinstance(type_name, str) and type_name in OBFUSCATION_TYPES:
-            found.add(type_name)
+        if isinstance(type_name, str):
+            # DiE 3.21 can emit lowercase types; retain canonical output names.
+            canonical = next(
+                (name for name in OBFUSCATION_TYPES if name.casefold() == type_name.casefold()),
+                None,
+            )
+            if canonical is not None:
+                found.add(canonical)
         for child in value.values():
             found.update(_find_obfuscation_types(child))
     elif isinstance(value, list):

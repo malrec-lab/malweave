@@ -51,6 +51,22 @@ def test_malconvgct_state_dict_round_trip_preserves_logits() -> None:
     torch.testing.assert_close(actual, expected)
 
 
+def test_short_inputs_enter_the_first_nominal_chunk_as_in_rawbyteclf() -> None:
+    config = MalConvGCTConfig(
+        embedding_size=2,
+        channels=3,
+        kernel_size=64,
+        stride=64,
+        chunk_size=65536,
+        min_chunk_size=1024,
+    )
+    model = MalConvGCTForSequenceClassification(config)
+    output = model(torch.tensor([[1, 2, 3]]), labels=torch.tensor([0]))
+    output.loss.backward()
+    assert torch.isfinite(output.logits).all()
+    assert model.malconv.embedding.weight.grad is not None
+
+
 def test_malconvgct_tiny_synthetic_batch_overfits() -> None:
     torch.manual_seed(19)
     model = MalConvGCTForSequenceClassification(_config())

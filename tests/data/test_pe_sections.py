@@ -71,6 +71,37 @@ def test_clips_ranges_like_rawbyteclf_and_records_warnings() -> None:
     assert result.extracted_bytes == b"A" * 0x100
 
 
+def test_audit_preserves_pe_and_explains_exact_output_ranges() -> None:
+    content = _synthetic_pe(
+        [
+            (b".code", 0x400, 0x200, IMAGE_SCN_CNT_CODE),
+            (b".data", 0x500, 0x20, 0),
+            (b".exec", 0x800, 0x200, IMAGE_SCN_MEM_EXECUTE),
+        ]
+    )
+    result = extract_executable_sections(content, collect_audit=True)
+    plain = extract_executable_sections(content)
+    assert result.extracted_bytes == plain.extracted_bytes
+    assert result.representation_sha256 == plain.representation_sha256
+    audit = result.audit
+    assert "header" in audit["pe"] and "optional_header" in audit["pe"]
+    assert audit["input_sha256"] == hashlib.sha256(content).hexdigest()
+    assert [section["name"] for section in audit["sections"]] == [".code", ".data", ".exec"]
+    assert audit["sections"][0]["warnings"] == ["section_over_next_section"]
+    assert audit["sections"][1]["selected"] is False
+    assert audit["sections"][2]["warnings"] == ["section_over_file_boundary"]
+    rebuilt = b"".join(
+        content[section["effective_start"] : section["effective_end"]]
+        for section in audit["sections"]
+        if section["copied_bytes"]
+    )
+    assert rebuilt == result.extracted_bytes
+    assert sum(section["copied_bytes"] for section in audit["sections"]) == result.extracted_size
+    malformed = extract_executable_sections(b"bad PE", collect_audit=True)
+    assert malformed.audit["status"] == "not_pe"
+    assert malformed.audit["input_bytes"] == 6
+
+
 def test_reports_stable_malformed_and_empty_executable_results() -> None:
     assert extract_executable_sections(b"not a PE").status == "not_pe"
     assert extract_executable_sections(b"MZ").status == "truncated_header"

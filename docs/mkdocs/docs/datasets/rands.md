@@ -1,5 +1,11 @@
 # RanDS Ransomware Dataset
 
+> Role: downstream EXE ransomware-versus-benign detection. RanDS has been converted to EXE
+> and published through the [shared S3 layout](s3-layout.md).
+> See the [research overview](../workflows/research-protocol.md) for the current study
+> and the earlier RanDS workflows.
+> Other feature representations below provide dataset background.
+
 ## Overview
 
 **RanDS** is a Windows Portable Executable (PE) corpus for ransomware research. It provides raw ransomware and benign PE samples through a searchable web interface, plus separately downloadable processed releases for static strings, imported/exported APIs, and sandbox-observed behavior. The dataset is intended for ransomware detection, ransomware-family classification, and static/dynamic feature research.
@@ -18,9 +24,15 @@ The live sample tables expose SHA-256, CPU architecture, file extension, file si
 
 RanDS states that its ransomware samples are **live** and are provided solely for research. It prohibits malicious use, exploitation, and distribution; users are responsible for complying with applicable laws. The site also warns that samples can harm devices and data.
 
-- Do not download raw samples to a personal workstation, commit them to this repository, execute them, restore them, or redistribute them.
-- Obtain institutional approval where required. Handle raw material only in an isolated, disposable malware-analysis environment with no credentials, shared folders, production connectivity, or bridged network access.
-- Prefer the processed feature releases for machine-learning work. The site describes these as containing no executable content, but their metadata and behavioral indicators can still be sensitive research material.
+- The researcher clarified on 2026-11-03 that authorized static research includes dataset
+  preparation, training on PE bytes and transfers to private research storage or GPU/Kaggle
+  environments. Keep raw samples access-controlled and outside Git; do not publicly redistribute
+  them. This project workflow never executes samples or opens them interactively.
+- Keep source samples unchanged, keep credentials out of dataset and notebook outputs, and
+  use the authorized research environment for the requested work.
+- Choose representations according to the experiment: E1/E2 require original PE bytes.
+  The processed feature releases contain no executable content according to the site, but
+  their metadata and behavioral indicators can still be sensitive research material.
 - Keep raw archives, extracted datasets, metadata exports, and experiment artifacts outside version control and document their local access controls.
 
 The official pages do not present a source-code repository for RanDS itself, so there is no dataset repository to clone. Access the dataset through the official website and retain its current research-use notice with the acquisition record.
@@ -53,9 +65,25 @@ The released `Ransomware.csv` header lists `Family, Packed, Entropy`, but the ro
 `Packed, Entropy, Family`. Use MalWeave's loader, which detects and normalizes this release-level
 schema mismatch. Do not trust the header through an unvalidated `csv.DictReader`.
 
-Run the read-only audit described in [LMLM on RanDS](../workflows/lmlm-rands.md) before using the
-snapshot. The committed dataset config records aggregate release expectations only; local paths,
-sample hashes, and manifests remain outside version control.
+The [data workflow](../workflows/data-preparation.md) defines metadata validation and EXE
+extraction. Audit the release contract before processing a source snapshot. The committed dataset config records aggregate release expectations only; local paths,
+sample hashes, and manifests remain outside version control. See the [S3 layout](s3-layout.md)
+for the published RanDS object keys, metadata and audit evidence.
+
+### Local DiE Packing Results
+
+Both files in `data/processed/rands/audit/` cover the same 215,404 samples.
+
+- `packing.csv` (11 columns) uses the shared schema for filtering by packing status
+  and comparing datasets. It includes the verdict and the status of each of the
+  three DiE scan modes. The 871 rows selected for a 90-second rerun carry evidence hashes
+  from `data/processed/audit/jobs/rands-die-rerun/state.sqlite3`. The original 10-second
+  rows have blank hashes because their SQLite evidence has not been located.
+- `packing-first-pass-10s.csv` (22 columns) preserves the first DiE scan with a 10-second timeout per mode. Use it to
+  review RanDS metadata, architecture reported by `file`, detector names, and
+  error details.
+
+Match rows using `sha256` in `packing.csv` and `source_sha256` in `packing-first-pass-10s.csv`.
 
 ## Processed Dataset Releases
 
@@ -133,7 +161,7 @@ If an archive is encrypted, list it and extract it only into a controlled data d
 1. Select one representation and create labels from the CSV source: benign `0`, ransomware `1`; use a ransomware family only for ransomware-only multi-class tasks.
 2. Join rows to features by SHA-256, then report how many samples are excluded because their selected representation is unavailable or malformed.
 3. Split before fitting tokenizers, vocabularies, normalizers, feature selection, resampling, or hyperparameters. Keep all representations of one SHA-256 in the same partition.
-4. For ransomware-family classification, split by family or use a carefully documented family-disjoint protocol when measuring generalization to unseen families. Report the support for each family rather than relying only on a micro-average.
+4. For closed-set ransomware-family classification, retain training support for each evaluated family and report per-family support and macro metrics. A family-disjoint detection protocol tests ransomware detection on held-out families; it is not ordinary closed-set family classification. Define any open-set attribution task separately.
 5. For realistic detection claims, use time-aware and provenance-aware splits when the supplied metadata permits them. Record exactly which `Year` values and collection snapshot were used.
 
 ## Important Caveats
