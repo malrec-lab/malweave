@@ -38,14 +38,20 @@ def raw_bytes_to_ids(content: bytes, max_bytes: int = 2_097_152) -> torch.Tensor
 
 
 def collate_raw_byte_ids(
-    examples: Sequence[tuple[torch.Tensor, int]], pad_token_id: int = RAW_PAD_TOKEN_ID
+    examples: Sequence[tuple[torch.Tensor, int]],
+    pad_token_id: int = RAW_PAD_TOKEN_ID,
+    *,
+    pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Prefix-pad no samples; only batch padding is added after the frozen truncation policy."""
     if not examples:
         raise LmlmInputError("Cannot collate an empty batch.")
     if any(ids.ndim != 1 for ids, _ in examples):
         raise LmlmInputError("RAW input IDs must be one-dimensional tensors.")
+    if type(pad_to_multiple_of) is not int or pad_to_multiple_of < 1:
+        raise LmlmInputError("pad_to_multiple_of must be a positive integer.")
     max_length = max(ids.numel() for ids, _ in examples)
+    max_length = (max_length + pad_to_multiple_of - 1) // pad_to_multiple_of * pad_to_multiple_of
     input_ids = torch.full((len(examples), max_length), pad_token_id, dtype=torch.long)
     labels = torch.empty(len(examples), dtype=torch.long)
     for index, (ids, label) in enumerate(examples):
@@ -65,7 +71,7 @@ def exe_words_to_text(content: bytes, word_bytes: int = EXE_WORD_BYTES) -> str:
 
 
 def train_exe_bpe_tokenizer(
-    train_contents: Iterable[bytes], vocab_size: int = 16_384
+    train_contents: Iterable[bytes], vocab_size: int = 16_384, *, full_byte_coverage: bool = False
 ) -> Tokenizer:
     """Fit BPE exclusively from the already-frozen training partition's EXE bytes."""
     if vocab_size < len(SPECIAL_TOKEN_ORDER):
@@ -76,6 +82,9 @@ def train_exe_bpe_tokenizer(
         vocab_size=vocab_size,
         special_tokens=list(SPECIAL_TOKEN_ORDER),
         show_progress=False,
+        initial_alphabet=(
+            [chr(value + 10_752) for value in range(256)] if full_byte_coverage else []
+        ),
     )
 
     seen = 0

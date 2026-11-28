@@ -479,8 +479,9 @@ def test_ghidra_command_keeps_rawbyteclf_lifting_contract(tmp_path: Path) -> Non
     assert command[-2:] == ["-deleteProject", "-okToDelete"]
 
 
+@pytest.mark.parametrize("detected_type", ["Packer", "packer", "PACKER"])
 def test_pe_assessment_records_i386_and_diec_annotation_then_resumes(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], detected_type: str
 ) -> None:
     root, config, shas = _fixture(tmp_path)
     file_tool = _static_tool(
@@ -491,7 +492,10 @@ def test_pe_assessment_records_i386_and_diec_annotation_then_resumes(
     die_tool = _static_tool(
         tmp_path,
         "fake-diec",
-        'printf \'%s\\n\' \'{"detects":[{"values":[{"type":"Packer"}]}]}\'',
+        "printf '%s\\n' "
+        + "'"
+        + json.dumps({"detects": [{"values": [{"type": detected_type}]}]})
+        + "'",
     )
     state_path = tmp_path / "assessment.sqlite"
     first_rows, first_summary = assess_rands_pe(

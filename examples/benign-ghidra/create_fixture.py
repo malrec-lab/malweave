@@ -8,7 +8,6 @@ from pathlib import Path
 import struct
 import sys
 
-
 BENIGN_HEADER = (
     "SHA256",
     "SHA1",
